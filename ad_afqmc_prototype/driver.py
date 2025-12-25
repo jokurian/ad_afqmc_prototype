@@ -19,6 +19,23 @@ from .stat_utils import blocking_analysis_ratio, reject_outliers
 print = partial(print, flush=True)
 
 
+def make_run_blocks(block):  # block: state -> (state, obs)
+    """
+    To keep things on GPU over multiple blocks.
+    """
+
+    def one_block(state, _):
+        state, obs = block(state)
+        return state, (obs.scalars["energy"], obs.scalars["weight"])
+
+    @partial(jax.jit, static_argnames=("n_blocks",))
+    def run_blocks(state0, *, n_blocks: int):
+        stateN, (e, w) = jax.lax.scan(one_block, state0, xs=None, length=n_blocks)
+        return stateN, e, w
+
+    return run_blocks
+
+
 def run_afqmc_energy(
     *,
     sys: system,
@@ -61,7 +78,7 @@ def run_afqmc_energy(
             meas_ctx=meas_ctx,
         )
 
-    block_jit = jax.jit(block)
+    run_blocks = make_run_blocks(block)
 
     t0 = time.perf_counter()
     t_mark = t0
@@ -86,16 +103,20 @@ def run_afqmc_energy(
         f"{float(jnp.sum(state.weights)):12.6e}  "
         f"{0.0:8.1f}"
     )
-    for ib in range(params.n_eql_blocks):
-        state, obs = block_jit(state)
-        block_e_eq.append(obs.scalars["energy"])
-        block_w_eq.append(obs.scalars["weight"])
-        if print_every and ((ib + 1) % print_every == 0):
+    chunk = print_every
+    for start in range(0, params.n_eql_blocks, chunk):
+        n = min(chunk, params.n_eql_blocks - start)
+        state, e_chunk, w_chunk = run_blocks(state, n_blocks=n)
+        block_e_eq.extend(e_chunk.tolist())
+        block_w_eq.extend(w_chunk.tolist())
+        e_chunk_avg = jnp.mean(e_chunk)
+        w_chunk_avg = jnp.mean(w_chunk)
+        if start > 0:
             elapsed = time.perf_counter() - t0
             print(
-                f"[eql {ib+1:4d}/{params.n_eql_blocks}]  "
-                f"{float(obs.scalars['energy']):14.10f}  "
-                f"{float(obs.scalars['weight']):12.6e}  "
+                f"[eql {start:4d}/{params.n_eql_blocks}]  "
+                f"{float(e_chunk_avg):14.10f}  "
+                f"{float(w_chunk_avg):12.6e}  "
                 f"{elapsed:8.1f}"
             )
     block_e_eq = jnp.asarray(block_e_eq)
@@ -112,36 +133,35 @@ def run_afqmc_energy(
             f"{'W':>12s}  {'dt[s/bl]':>9s}  {'t[s]':>8s}"
         )
 
-    for ib in range(params.n_blocks):
-        state, obs = block_jit(state)
-        block_e_s.append(obs.scalars["energy"])
-        block_w_s.append(obs.scalars["weight"])
-
-        if print_every and ((ib + 1) % print_every == 0):
-            e_arr = jnp.asarray(block_e_s)
-            w_arr = jnp.asarray(block_w_s)
-            stats = blocking_analysis_ratio(e_arr, w_arr, print_q=False)
-
-            now = time.perf_counter()
-            elapsed = now - t0
-            dt_per_block = (now - t_mark) / float(print_every)
-            t_mark = now
-
+    chunk = print_every
+    for start in range(0, params.n_blocks, chunk):
+        n = min(chunk, params.n_blocks - start)
+        state, e_chunk, w_chunk = run_blocks(state, n_blocks=n)
+        block_e_s.extend(e_chunk.tolist())
+        block_w_s.extend(w_chunk.tolist())
+        e_chunk_avg = jnp.mean(e_chunk)
+        w_chunk_avg = jnp.mean(w_chunk)
+        if start > 0:
+            elapsed = time.perf_counter() - t0
+            dt_per_block = (time.perf_counter() - t_mark) / float(n)
+            t_mark = time.perf_counter()
+            stats = blocking_analysis_ratio(
+                jnp.asarray(block_e_s), jnp.asarray(block_w_s), print_q=False
+            )
             mu = float(stats["mu"])
             se = float(stats["se_star"])
-            w_last = float(obs.scalars["weight"])
             print(
-                f"[blk {ib+1:4d}/{params.n_blocks}]  "
+                f"[blk {start:4d}/{params.n_blocks}]  "
                 f"{mu:14.10f}  "
                 f"{se:10.3e}  "
-                f"{float(obs.scalars['energy']):14.10f}  "
-                f"{w_last:12.6e}  "
+                f"{float(e_chunk_avg):14.10f}  "
+                f"{float(w_chunk_avg):12.6e}  "
                 f"{dt_per_block:9.3f}  "
                 f"{elapsed:8.1f}"
             )
-
     block_e_s = jnp.asarray(block_e_s)
     block_w_s = jnp.asarray(block_w_s)
+
     data_clean, _ = reject_outliers(jnp.column_stack((block_e_s, block_w_s)), obs=0)
     print(f"\nRejected {block_e_s.shape[0] - data_clean.shape[0]} outlier blocks.")
     block_e_s = jnp.asarray(data_clean[:, 0])
