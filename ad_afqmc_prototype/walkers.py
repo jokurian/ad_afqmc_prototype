@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -173,9 +173,9 @@ def _qr(mat: jax.Array) -> tuple[jax.Array, jax.Array]:
     q, r = jnp.linalg.qr(mat, mode="reduced")
     d = jnp.diag(r)
     abs_d = jnp.abs(d)
-    phase = d / jnp.where(abs_d == 0, 1.0 + 0.0j, abs_d)
+    phase = d / jnp.where(abs_d == 0, 1.0, abs_d)
     q = q * jnp.conj(phase)[None, :]
-    r = phase[:, None] * r
+    r = phase[:, None] * r  # check this is correct for free projection
     det_r = jnp.prod(jnp.diag(r))
     return q, det_r
 
