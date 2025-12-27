@@ -1,21 +1,16 @@
-# trial/auto.py
 from __future__ import annotations
 
-from typing import Any, Callable
-
-import jax
-
-from ..core.ops import trial_ops
+from ..core.ops import overlap_fn, rdm1_fn, trial_ops
 from ..core.system import system
 
 
 def make_auto_trial_ops(
     sys: system,
     *,
-    overlap_r: Callable[[jax.Array, Any], jax.Array],
-    overlap_u: Callable[[tuple[jax.Array, jax.Array], Any], jax.Array],
-    overlap_g: Callable[[jax.Array, Any], jax.Array],
-    get_rdm1: Callable[[Any], jax.Array],
+    overlap_r: overlap_fn,
+    overlap_u: overlap_fn,
+    overlap_g: overlap_fn,
+    get_rdm1: rdm1_fn,
 ) -> trial_ops:
     """
     For convenience.

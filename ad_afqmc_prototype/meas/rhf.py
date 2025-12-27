@@ -20,7 +20,7 @@ def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Ar
 
 
 def force_bias_kernel_r(
-    walker: jax.Array, _ham: Any, meas_ctx: rhf_meas_ctx, trial_data: rhf_trial
+    walker: jax.Array, ham_data: Any, meas_ctx: rhf_meas_ctx, trial_data: rhf_trial
 ) -> jax.Array:
     m = trial_data.mo_coeff.conj().T @ walker
     g_half = _half_green_from_overlap_matrix(walker, m)  # (nocc, norb)
@@ -47,7 +47,7 @@ def energy_kernel_r(
 
 def force_bias_kernel_u(
     walker: tuple[jax.Array, jax.Array],
-    _ham: Any,
+    ham_data: Any,
     meas_ctx: rhf_meas_ctx,
     trial_data: rhf_trial,
 ) -> jax.Array:
@@ -94,7 +94,7 @@ def energy_kernel_u(
 
 
 def force_bias_kernel_g(
-    walker: jax.Array, _ham: Any, meas_ctx: rhf_meas_ctx, trial_data: rhf_trial
+    walker: jax.Array, ham_data: Any, meas_ctx: rhf_meas_ctx, trial_data: rhf_trial
 ) -> jax.Array:
     norb, nocc = trial_data.norb, trial_data.nocc
     cH = trial_data.mo_coeff.conj().T

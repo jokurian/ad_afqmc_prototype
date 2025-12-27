@@ -259,48 +259,51 @@ def make_auto_meas_ops(
     wk = sys.walker_kind.lower()
     overlap = trial_ops_.overlap
 
-    def build_ctx(ham_data: ham_chol, trial: Any) -> auto_meas_ctx:
-        return build_meas_ctx(ham_data, trial, eps=eps)
+    def build_ctx(ham_data: ham_chol, trial_data: Any) -> auto_meas_ctx:
+        return build_meas_ctx(ham_data, trial_data, eps=eps)
 
     if wk == "restricted":
+        fb = lambda walker, ham_data, meas_ctx, trial_data: force_bias_kernel_r(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
+        ene = lambda walker, ham_data, meas_ctx, trial_data: energy_kernel_r(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
         return meas_ops(
             overlap=overlap,
             build_meas_ctx=build_ctx,
-            kernels={
-                k_force_bias: lambda w, h, c, t: force_bias_kernel_r(
-                    w, h, c, t, overlap=overlap
-                ),
-                k_energy: lambda w, h, c, t: energy_kernel_r(
-                    w, h, c, t, overlap=overlap
-                ),
-            },
+            kernels={k_force_bias: fb, k_energy: ene},
         )
 
     if wk == "unrestricted":
+        fb = lambda walker, ham_data, meas_ctx, trial_data: force_bias_kernel_u(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
+        ene = lambda walker, ham_data, meas_ctx, trial_data: energy_kernel_u(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
         return meas_ops(
             overlap=overlap,
             build_meas_ctx=build_ctx,
             kernels={
-                k_force_bias: lambda w, h, c, t: force_bias_kernel_u(
-                    w, h, c, t, overlap=overlap
-                ),
-                k_energy: lambda w, h, c, t: energy_kernel_u(
-                    w, h, c, t, overlap=overlap
-                ),
+                k_force_bias: fb,
+                k_energy: ene,
             },
         )
 
     if wk == "generalized":
+        fb = lambda walker, ham_data, meas_ctx, trial_data: force_bias_kernel_g(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
+        ene = lambda walker, ham_data, meas_ctx, trial_data: energy_kernel_g(
+            walker, ham_data, meas_ctx, trial_data, overlap=overlap
+        )
         return meas_ops(
             overlap=overlap,
             build_meas_ctx=build_ctx,
             kernels={
-                k_force_bias: lambda w, h, c, t: force_bias_kernel_g(
-                    w, h, c, t, overlap=overlap
-                ),
-                k_energy: lambda w, h, c, t: energy_kernel_g(
-                    w, h, c, t, overlap=overlap
-                ),
+                k_force_bias: fb,
+                k_energy: ene,
             },
         )
 

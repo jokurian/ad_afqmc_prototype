@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, NamedTuple, Optional
+from typing import Any, Callable, Mapping, NamedTuple, Protocol
 
 import jax
 
-from .typing import array, ham_data, trial_data
+from .typing import ham_data, trial_data
+
+# Using Protocols for public APIs, Callables for internal helper APIs.
+
+# trial
+
+
+class overlap_fn(Protocol):
+    def __call__(self, walker: Any, trial_data: Any) -> jax.Array: ...
+
+
+class rdm1_fn(Protocol):
+    def __call__(self, trial_data: Any) -> jax.Array: ...
 
 
 class trial_ops(NamedTuple):
@@ -15,11 +27,11 @@ class trial_ops(NamedTuple):
       - get_rdm1: trial rdm1
     """
 
-    overlap: Callable[[Any, trial_data], array]  # (walker, trial_data) -> overlap
-    get_rdm1: Callable[[trial_data], array]
-    greens: Optional[Callable[[Any, trial_data], Any]] = (
-        None  # (walker, trial_data) -> greens function
-    )
+    overlap: overlap_fn  # (walker, trial_data) -> overlap
+    get_rdm1: rdm1_fn  # (trial_data) -> rdm1
+
+
+# hamiltonian
 
 
 class ham_ops(NamedTuple):
@@ -30,9 +42,18 @@ class ham_ops(NamedTuple):
     n_fields: Callable[[ham_data], int]
 
 
-# a generic measurement kernel signature:
-# (walker, ham_static, meas_ctx, trial_data) -> array-like
-meas_kernel = Callable[[Any, Any, Any, Any], jax.Array]
+# measurements
+
+
+class meas_kernel(Protocol):
+    """
+    Measurement kernel protocol.
+    """
+
+    def __call__(
+        self, walker: Any, ham_data: Any, meas_ctx: Any, trial_data: Any
+    ) -> jax.Array: ...
+
 
 # usual kernel names
 k_energy = "energy"
@@ -46,7 +67,7 @@ class meas_ops:
     """
 
     # same as trial_ops.overlap
-    overlap: Callable[[Any, Any], jax.Array]  # (walker, trial_data) -> overlap
+    overlap: overlap_fn  # (walker, trial_data) -> overlap
 
     # intermediates for measurements
     build_meas_ctx: Callable[[ham_data, trial_data], Any] = (
