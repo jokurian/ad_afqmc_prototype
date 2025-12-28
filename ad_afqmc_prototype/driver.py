@@ -118,8 +118,8 @@ def run_qmc_energy(
         state, e_chunk, w_chunk = run_blocks(state, n_blocks=n)
         block_e_eq.extend(e_chunk.tolist())
         block_w_eq.extend(w_chunk.tolist())
-        e_chunk_avg = jnp.mean(e_chunk)
         w_chunk_avg = jnp.mean(w_chunk)
+        e_chunk_avg = jnp.mean(e_chunk * w_chunk) / w_chunk_avg
         elapsed = time.perf_counter() - t0
         print(
             f"[eql {start + n:4d}/{params.n_eql_blocks}]  "
@@ -148,8 +148,8 @@ def run_qmc_energy(
         state, e_chunk, w_chunk = run_blocks(state, n_blocks=n)
         block_e_s.extend(e_chunk.tolist())
         block_w_s.extend(w_chunk.tolist())
-        e_chunk_avg = jnp.mean(e_chunk)
         w_chunk_avg = jnp.mean(w_chunk)
+        e_chunk_avg = jnp.mean(e_chunk * w_chunk) / w_chunk_avg
         elapsed = time.perf_counter() - t0
         dt_per_block = (time.perf_counter() - t_mark) / float(n)
         t_mark = time.perf_counter()
