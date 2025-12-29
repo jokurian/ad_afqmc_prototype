@@ -30,6 +30,7 @@ def init_prop_state(
     params: QmcParams,
     initial_walkers: Any | None = None,
     initial_e_estimate: jax.Array | None = None,
+    rdm1: jax.Array | None = None,
 ) -> PropState:
     """
     Initialize CPMC propagation state.
@@ -40,9 +41,9 @@ def init_prop_state(
     weights = jnp.ones((n_walkers,))
 
     if initial_walkers is None:
-        initial_walkers = init_walkers(
-            sys=sys, rdm1=trial_ops.get_rdm1(trial_data), n_walkers=n_walkers
-        )
+        if rdm1 is None:
+            rdm1 = trial_ops.get_rdm1(trial_data)
+        initial_walkers = init_walkers(sys=sys, rdm1=rdm1, n_walkers=n_walkers)
 
     initial_walkers = jax.tree_util.tree_map(lambda x: jnp.real(x), initial_walkers)
 
@@ -126,7 +127,7 @@ def cpmc_step(
     overlaps_1 = jnp.real(overlaps_1)
 
     # constraint
-    ratio_1 = jnp.real(overlaps_1 / jnp.clip(state.overlaps, min=1.0e-300))
+    ratio_1 = jnp.real(overlaps_1 / state.overlaps)
     ratio_1 = jnp.where(ratio_1 <= w_floor, 0.0, ratio_1)
     node_step = node_step + jnp.sum(ratio_1 <= 0.0)
 
@@ -223,7 +224,7 @@ def cpmc_step(
     )
     overlaps_2 = jnp.real(overlaps_2)
 
-    ratio_2 = jnp.real(overlaps_2 / jnp.clip(overlaps, min=1.0e-300))
+    ratio_2 = jnp.real(overlaps_2 / overlaps)
     ratio_2 = jnp.where(ratio_2 <= w_floor, 0.0, ratio_2)
     node_step = node_step + jnp.sum(ratio_2 <= 0.0)
 

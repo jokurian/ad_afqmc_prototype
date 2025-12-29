@@ -53,13 +53,13 @@ def cpmc_step(
     overlaps = jnp.real(overlaps)
 
     # constrained-path weight update via real overlap ratio
-    ratio = jnp.real(overlaps / jnp.clip(state.overlaps, min=1.0e-300))
+    ratio = jnp.real(overlaps / state.overlaps)
     ratio = jnp.where(ratio < w_floor, 0.0, ratio)
     node_encounters_step = jnp.sum(ratio <= 0.0)
     weights = state.weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
-    # two-body: scan over sites
+    # two body: scan over sites
     hs = prop_ctx.hs_constant  # (2,2)
 
     def scanned_fun(carry, x):
@@ -73,7 +73,7 @@ def cpmc_step(
             (w0_up, w0_dn), trial_data
         )
         ov0 = jnp.real(ov0)
-        r0 = 0.5 * jnp.real(ov0 / jnp.clip(overlaps, min=1.0e-300))
+        r0 = 0.5 * jnp.real(ov0 / overlaps)
         r0 = jnp.where(r0 < w_floor, 0.0, r0)
         node_encounters += jnp.sum(r0 <= 0.0)
 
@@ -84,7 +84,7 @@ def cpmc_step(
             (w1_up, w1_dn), trial_data
         )
         ov1 = jnp.real(ov1)
-        r1 = 0.5 * jnp.real(ov1 / jnp.clip(overlaps, min=1.0e-300))
+        r1 = 0.5 * jnp.real(ov1 / overlaps)
         r1 = jnp.where(r1 < w_floor, 0.0, r1)
         node_encounters += jnp.sum(r1 <= 0.0)
 
@@ -120,7 +120,7 @@ def cpmc_step(
     )(walkers, trial_data)
     overlaps_new = jnp.real(overlaps_new)
 
-    ratio = jnp.real(overlaps_new / jnp.clip(overlaps, min=1.0e-300))
+    ratio = jnp.real(overlaps_new / overlaps)
     ratio = jnp.where(ratio < w_floor, 0.0, ratio)
     node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = weights * ratio
