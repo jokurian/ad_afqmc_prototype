@@ -72,6 +72,6 @@ class InitPropState(Protocol):
 class PropOps:
     init_prop_state: InitPropState
     build_prop_ctx: Callable[
-        [Any, Any, QmcParams], Any
-    ]  # (ham_data, trial_data, params) -> prop_ctx
+        [Any, jax.Array, QmcParams], Any
+    ]  # (ham_data, rdm1, params) -> prop_ctx
     step: StepKernel
