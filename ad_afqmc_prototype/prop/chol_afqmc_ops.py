@@ -56,8 +56,8 @@ def _as_total_rdm1_restricted(dm: jax.Array) -> jax.Array:
     return dm
 
 
-def _mf_shifts(ham_data: HamChol, trial_rdm1: jax.Array) -> jax.Array:
-    dm = trial_rdm1
+def _mf_shifts(ham_data: HamChol, rdm1: jax.Array) -> jax.Array:
+    dm = rdm1
     if ham_data.basis == "restricted":
         dm = _as_total_rdm1_restricted(dm)
     return 1.0j * jnp.einsum("gij,ji->g", ham_data.chol, dm, optimize="optimal")
@@ -74,13 +74,11 @@ def _make_vhs_split_flat(*, chol_flat: jax.Array, x: jax.Array, n: int) -> jax.A
     return lax.complex(v_re, v_im).reshape(n, n)
 
 
-def _build_prop_ctx(
-    ham_data: HamChol, trial_rdm1: jax.Array, dt: float
-) -> CholAfqmcCtx:
+def _build_prop_ctx(ham_data: HamChol, rdm1: jax.Array, dt: float) -> CholAfqmcCtx:
     dt_a = jnp.array(dt)
     sqrt_dt = jnp.sqrt(dt_a)
 
-    mf = _mf_shifts(ham_data, trial_rdm1)
+    mf = _mf_shifts(ham_data, rdm1)
     h0_prop = -ham_data.h0 - 0.5 * jnp.sum(mf**2)
 
     h1_eff = ham_data.h1

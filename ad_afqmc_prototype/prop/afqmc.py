@@ -166,9 +166,9 @@ def make_prop_ops(ham_data: HamChol, walker_kind: str) -> PropOps:
         )
 
     def build_prop_ctx(
-        ham_data: Any, trial_data: Any, params: QmcParams
+        ham_data: Any, rdm1: jax.Array, params: QmcParams
     ) -> CholAfqmcCtx:
-        return _build_prop_ctx(ham_data, trial_data, params.dt)
+        return _build_prop_ctx(ham_data, rdm1, params.dt)
 
     return PropOps(
         init_prop_state=init_prop_state, build_prop_ctx=build_prop_ctx, step=step
