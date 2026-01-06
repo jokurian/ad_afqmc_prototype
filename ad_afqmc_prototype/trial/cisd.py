@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import jax
@@ -118,3 +118,15 @@ def make_cisd_trial_ops(sys: System) -> TrialOps:
             f"CISD trial currently supports only restricted walkers, got: {sys.walker_kind}"
         )
     return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1)
+
+
+def slice_trial_level(trial: CisdTrial, nvir_keep: int | None) -> CisdTrial:
+    """
+    Return a trial object whose ci1/ci2 are sliced to keep only the first nvir_keep virtuals.
+    """
+    if nvir_keep is None:
+        return trial
+
+    ci1 = trial.ci1[:, :nvir_keep]
+    ci2 = trial.ci2[:, :nvir_keep, :, :nvir_keep]
+    return replace(trial, ci1=ci1, ci2=ci2)

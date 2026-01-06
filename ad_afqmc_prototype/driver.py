@@ -75,6 +75,7 @@ def run_qmc_energy(
     prop_ops: PropOps,
     block_fn: BlockFn,
     state: PropState | None = None,
+    meas_ctx: Any | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """
     equilibration blocks then sampling blocks.
@@ -88,7 +89,8 @@ def run_qmc_energy(
     print("")
     # build ctx
     prop_ctx = prop_ops.build_prop_ctx(ham_data, trial_ops.get_rdm1(trial_data), params)
-    meas_ctx = meas_ops.build_meas_ctx(ham_data, trial_data)
+    if meas_ctx is None:
+        meas_ctx = meas_ops.build_meas_ctx(ham_data, trial_data)
     if state is None:
         state = prop_ops.init_prop_state(
             sys=sys,

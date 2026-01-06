@@ -6,11 +6,44 @@ import jax
 import jax.numpy as jnp
 from jax import lax, tree_util
 
+from ..core.levels import LevelPack, LevelSpec
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
-from ..ham.chol import HamChol
+from ..ham.chol import HamChol, slice_ham_level
 from ..trial.cisd import CisdTrial
 from ..trial.cisd import overlap_r as cisd_overlap_r
+from ..trial.cisd import slice_trial_level
+
+
+def make_level_pack(
+    *, ham_data: HamChol, trial_data: CisdTrial, level: LevelSpec
+) -> LevelPack:
+    """
+    Build a CISD measurement LevelPack for prefix truncations.
+    """
+    # orbital prefix: keep occ + first nvir_keep virtuals
+    if level.nvir_keep is None:
+        trial_lvl = trial_data
+        norb_keep = None
+    else:
+        trial_lvl = slice_trial_level(trial_data, level.nvir_keep)
+        norb_keep = int(trial_data.nocc) + int(level.nvir_keep)
+
+    ham_lvl = slice_ham_level(
+        ham_data,
+        norb_keep=norb_keep,
+        nchol_keep=level.nchol_keep,
+    )
+
+    meas_ctx_lvl = build_meas_ctx(ham_lvl, trial_lvl)
+
+    return LevelPack(
+        level=level,
+        ham_data=ham_lvl,
+        trial_data=trial_lvl,
+        meas_ctx=meas_ctx_lvl,
+        norb_keep=norb_keep,
+    )
 
 
 def _greens_restricted(walker: jax.Array, nocc: int) -> jax.Array:
@@ -35,15 +68,15 @@ class CisdMeasCtx:
     h1: jax.Array  # (norb, norb)
     chol: jax.Array  # (n_chol, norb, norb)
     rot_chol: jax.Array  # (n_chol, nocc, norb)   = chol[:, :nocc, :]
-    lci1: jax.Array  # (n_chol, norb, nocc)       = einsum(chol[:, :, nocc:], ci1)
+    # lci1: jax.Array  # (n_chol, norb, nocc)       = einsum(chol[:, :, nocc:], ci1)
 
     def tree_flatten(self):
-        return (self.h1, self.chol, self.rot_chol, self.lci1), None
+        return (self.h1, self.chol, self.rot_chol), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
-        h1, chol, rot_chol, lci1 = children
-        return cls(h1=h1, chol=chol, rot_chol=rot_chol, lci1=lci1)
+        h1, chol, rot_chol = children
+        return cls(h1=h1, chol=chol, rot_chol=rot_chol)
 
 
 def build_meas_ctx(ham_data: HamChol, trial_data: CisdTrial) -> CisdMeasCtx:
@@ -59,14 +92,14 @@ def build_meas_ctx(ham_data: HamChol, trial_data: CisdTrial) -> CisdMeasCtx:
 
     rot_chol = chol[:, :nocc, :]  # (n_chol, nocc, norb)
 
-    lci1 = jnp.einsum(
-        "git,pt->gip",
-        chol[:, :, nocc:],
-        trial_data.ci1,
-        optimize="optimal",
-    )  # (n_chol, norb, nocc)
+    # lci1 = jnp.einsum(
+    #     "git,pt->gip",
+    #     chol[:, :, nocc:],
+    #     trial_data.ci1,
+    #     optimize="optimal",
+    # )  # (n_chol, norb, nocc)
 
-    return CisdMeasCtx(h1=h1, chol=chol, rot_chol=rot_chol, lci1=lci1)
+    return CisdMeasCtx(h1=h1, chol=chol, rot_chol=rot_chol)  # , lci1=lci1)
 
 
 def force_bias_kernel_r(
@@ -210,7 +243,9 @@ def energy_kernel_r(
 
     ci1g1 = ci1 @ green_occ.T  # (nocc, nocc)
     e2_1_3_1 = jnp.einsum("gpq,gqr,rp->", lg1, lg1, ci1g1, optimize="optimal")
-    lci1g_mat = jnp.einsum("gip,qi->gpq", meas_ctx.lci1, green, optimize="optimal")
+    # lci1g_mat = jnp.einsum("gip,qi->gpq", meas_ctx.lci1, green, optimize="optimal")
+    tmp = jnp.einsum("qi,git->gqt", green, chol[:, :, nocc:], optimize="optimal")
+    lci1g_mat = jnp.einsum("gqt,pt->gpq", tmp, ci1, optimize="optimal")
     e2_1_3_2 = -jnp.einsum("gpq,gqp->", lci1g_mat, lg1, optimize="optimal")
     e2_1_3 = e2_1_3_1 + e2_1_3_2
 

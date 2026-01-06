@@ -231,3 +231,39 @@ def stochastic_reconfiguration(
         return w[idx], weights_new
 
     raise ValueError(f"unknown walker_kind: {walker_kind}")
+
+
+def slice_walkers(walkers: Any, walker_kind: str, norb_keep: int | None) -> Any:
+    """
+    Slice walkers to a prefix of orbital rows for measurement only truncations.
+    Used in MLMC.
+
+    Parameters
+    ----------
+    walkers:
+      Walker batch.
+
+    walker_kind:
+      sys.walker_kind
+
+    norb_keep:
+      If None, return walkers unchanged. Otherwise keep orbital indices [0:norb_keep).
+    """
+    if norb_keep is None:
+        return walkers
+
+    wk = walker_kind.lower()
+
+    if wk == "restricted" or wk == "generalized":
+        # walkers: (nw, norb, nocc)
+        return walkers[:, :norb_keep, :]
+
+    if wk == "unrestricted":
+        wu, wd = walkers
+        return (wu[:, :norb_keep, :], wd[:, :norb_keep, :])
+
+    raise ValueError(f"unknown walker_kind: {walker_kind}")
+
+
+def take_walkers(walkers: Any, idx: jnp.ndarray) -> Any:
+    return jax.tree_util.tree_map(lambda x: x[idx, ...], walkers)
