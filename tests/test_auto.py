@@ -12,59 +12,10 @@ from ad_afqmc_prototype.ham.chol import HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.rhf import make_rhf_meas_ops
 from ad_afqmc_prototype.trial.rhf import RhfTrial, make_rhf_trial_ops
+from ad_afqmc_prototype import testing
 
-
-def _rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
-    """
-    Random (nrow, ncol) matrix with orthonormal columns via QR.
-    """
-    k1, k2 = jax.random.split(key)
-    a = jax.random.normal(
-        k1, (nrow, ncol), dtype=jnp.float64
-    ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
-    q, _ = jnp.linalg.qr(a, mode="reduced")
-    return q.astype(dtype)
-
-
-def _make_random_ham_chol(key, norb, n_chol, dtype=jnp.float64) -> HamChol:
-    """
-    Build a small 'restricted' HamChol with:
-      - symmetric real h1
-      - symmetric real chol[g]
-    """
-    k1, k2, k3 = jax.random.split(key, 3)
-
-    a = jax.random.normal(k1, (norb, norb), dtype=dtype)
-    h1 = 0.5 * (a + a.T)
-
-    b = jax.random.normal(k2, (n_chol, norb, norb), dtype=dtype)
-    chol = 0.5 * (b + jnp.swapaxes(b, 1, 2))
-
-    h0 = jax.random.normal(k3, (), dtype=dtype)
-
-    return HamChol(basis="restricted", h0=h0, h1=h1, chol=chol)
-
-
-def _make_walkers(key, sys: System, dtype=jnp.complex128):
-    norb, nocc = sys.norb, sys.nup
-    wk = sys.walker_kind.lower()
-
-    if wk == "restricted":
-        w = _rand_orthonormal_cols(key, norb, nocc, dtype=dtype)
-        return w
-
-    if wk == "unrestricted":
-        k1, k2 = jax.random.split(key)
-        wu = _rand_orthonormal_cols(k1, norb, nocc, dtype=dtype)
-        wd = _rand_orthonormal_cols(k2, norb, nocc, dtype=dtype)
-        return (wu, wd)
-
-    if wk == "generalized":
-        w = _rand_orthonormal_cols(key, 2 * norb, 2 * nocc, dtype=dtype)
-        return w
-
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
-
+def _make_random_rhf_trial(key, norb, nocc):
+    return RhfTrial(mo_coeff=testing._rand_orthonormal_cols(key, norb, nocc))
 
 @pytest.mark.parametrize("walker_kind", ["restricted", "unrestricted"])
 def test_auto_force_bias_matches_manual_rhf(walker_kind):
@@ -77,8 +28,8 @@ def test_auto_force_bias_matches_manual_rhf(walker_kind):
     key = jax.random.PRNGKey(0)
     k_ham, k_trial, k_w = jax.random.split(key, 3)
 
-    ham = _make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
-    trial = RhfTrial(mo_coeff=_rand_orthonormal_cols(k_trial, norb, nocc))
+    ham = testing._make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
+    trial = _make_random_rhf_trial(k_trial, norb, nocc)
 
     t_ops = make_rhf_trial_ops(sys)
     meas_manual = make_rhf_meas_ops(sys)
@@ -91,7 +42,7 @@ def test_auto_force_bias_matches_manual_rhf(walker_kind):
     fb_auto = meas_auto.require_kernel(k_force_bias)
 
     for i in range(4):
-        wi = _make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = testing._make_walkers(jax.random.fold_in(k_w, i), sys)
         v_m = fb_manual(wi, ham, ctx_manual, trial)
         v_a = fb_auto(wi, ham, ctx_auto, trial)
 
@@ -109,8 +60,8 @@ def test_auto_energy_matches_manual_rhf(walker_kind):
     key = jax.random.PRNGKey(1)
     k_ham, k_trial, k_w = jax.random.split(key, 3)
 
-    ham = _make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
-    trial = RhfTrial(mo_coeff=_rand_orthonormal_cols(k_trial, norb, nocc))
+    ham = testing._make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
+    trial = _make_random_rhf_trial(k_trial, norb, nocc)
 
     t_ops = make_rhf_trial_ops(sys)
     meas_manual = make_rhf_meas_ops(sys)
@@ -123,7 +74,7 @@ def test_auto_energy_matches_manual_rhf(walker_kind):
     e_auto = meas_auto.require_kernel(k_energy)
 
     for i in range(4):
-        wi = _make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = testing._make_walkers(jax.random.fold_in(k_w, i), sys)
         em = e_manual(wi, ham, ctx_manual, trial)
         ea = e_auto(wi, ham, ctx_auto, trial)
 
@@ -144,8 +95,8 @@ def test_auto_force_bias_matches_manual_rhf_generalized():
     key = jax.random.PRNGKey(2)
     k_ham, k_trial, k_w = jax.random.split(key, 3)
 
-    ham = _make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
-    trial = RhfTrial(mo_coeff=_rand_orthonormal_cols(k_trial, norb, nocc))
+    ham = testing._make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
+    trial = _make_random_rhf_trial(k_trial, norb, nocc)
 
     t_ops = make_rhf_trial_ops(sys)
     meas_manual = make_rhf_meas_ops(sys)
@@ -158,7 +109,7 @@ def test_auto_force_bias_matches_manual_rhf_generalized():
     fb_auto = meas_auto.require_kernel(k_force_bias)
 
     for i in range(4):
-        wi = _make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = testing._make_walkers(jax.random.fold_in(k_w, i), sys)
         v_m = fb_manual(wi, ham, ctx_manual, trial)
         v_a = fb_auto(wi, ham, ctx_auto, trial)
         assert jnp.allclose(v_a, v_m, rtol=1e-7, atol=1e-8), (v_a, v_m)

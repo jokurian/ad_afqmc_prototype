@@ -1,0 +1,89 @@
+import jax
+import jax.numpy as jnp
+
+from ad_afqmc_prototype.core.ops import TrialOps
+from ad_afqmc_prototype.core.system import System
+from ad_afqmc_prototype.ham.chol import HamChol
+
+def _rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
+    """
+    Random (nrow, ncol) matrix with orthonormal columns via QR.
+    """
+    k1, k2 = jax.random.split(key)
+    a = jax.random.normal(
+        k1, (nrow, ncol), dtype=jnp.float64
+    ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
+    q, _ = jnp.linalg.qr(a, mode="reduced")
+    return q.astype(dtype)
+
+def _make_random_ham_chol(key, norb, n_chol, dtype=jnp.float64) -> HamChol:
+    """
+    Build a small 'restricted' HamChol with:
+      - symmetric real h1
+      - symmetric real chol[g]
+    """
+    k1, k2, k3 = jax.random.split(key, 3)
+    
+    a = jax.random.normal(k1, (norb, norb), dtype=dtype)
+    h1 = 0.5 * (a + a.T)
+
+    b = jax.random.normal(k2, (n_chol, norb, norb), dtype=dtype)
+    chol = 0.5 * (b + jnp.swapaxes(b, 1, 2))
+    
+    h0 = jax.random.normal(k3, (), dtype=dtype)
+
+    return HamChol(basis="restricted", h0=h0, h1=h1, chol=chol)
+
+def _make_walkers(key, sys: System, dtype=jnp.complex128):
+    """
+    Build a random walker that can be either
+    - restricted (norb, nocc)
+    - unrestricted ((norb, na), (norb, nb))
+    - generalized (2*norb, na+nb)
+    """
+    norb, na, nb = sys.norb, sys.nup, sys.ndn
+    wk = sys.walker_kind.lower()
+
+    if wk == "restricted":
+        w = _rand_orthonormal_cols(key, norb, na, dtype=dtype)
+        return w
+
+    if wk == "unrestricted":
+        k1, k2 = jax.random.split(key)
+        wu = _rand_orthonormal_cols(k1, norb, na, dtype=dtype)
+        wd = _rand_orthonormal_cols(k2, norb, nb, dtype=dtype)
+        return (wu, wd)
+
+    if wk == "generalized":
+        w = _rand_orthonormal_cols(key, 2 * norb, na+nb, dtype=dtype)
+        return w
+
+    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
+def _make_restricted_walker_near_ref(
+    key, norb: int, nocc: int, *, mix: float = 0.2, dtype=jnp.complex128
+) -> jax.Array:
+    """
+    Make a restricted walker (norb, nocc) whose occupied block isn't near-singular.
+
+    Start from the reference [I;0] and add a small random perturbation, then QR.
+    This avoids tiny det(w[:nocc,:]) which can make overlap-based finite differences noisy.
+    """
+    k1, k2 = jax.random.split(key)
+    w0 = jnp.zeros((norb, nocc), dtype=jnp.complex128)
+    w0 = w0.at[:nocc, :].set(jnp.eye(nocc, dtype=jnp.complex128))
+    noise = jax.random.normal(
+        k1, (norb, nocc), dtype=jnp.float64
+    ) + 1.0j * jax.random.normal(k2, (norb, nocc), dtype=jnp.float64)
+    w = w0 + mix * noise
+    q, _ = jnp.linalg.qr(w, mode="reduced")
+    return q.astype(dtype)
+
+def _make_dummy_trial_ops():
+    def get_rdm1(trial_data):
+        return trial_data["rdm1"]
+
+    def overlap(walker, trial_data):
+        return jnp.asarray(1.0 + 0.0j)
+
+    return TrialOps(overlap=overlap, get_rdm1=get_rdm1)
