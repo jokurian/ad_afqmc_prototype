@@ -13,8 +13,8 @@ from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.chol import HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
-from ad_afqmc_prototype.meas.ucisd import make_ucisd_meas_ops
-from ad_afqmc_prototype.trial.ucisd import UcisdTrial, make_ucisd_trial_ops
+from ad_afqmc_prototype.meas.ucisd import make_ucisd_meas_ops, energy_kernel_g
+from ad_afqmc_prototype.trial.ucisd import UcisdTrial, make_ucisd_trial_ops, overlap_g
 from ad_afqmc_prototype import testing
 
 def _make_ucisd_trial(
@@ -45,14 +45,21 @@ def _make_ucisd_trial(
     c2aa = scale_ci2 * jax.random.normal(k3, (n_oa, n_va, n_oa, n_va), dtype=dtype)
     c2ab = scale_ci2 * jax.random.normal(k4, (n_oa, n_va, n_ob, n_vb), dtype=dtype)
     c2bb = scale_ci2 * jax.random.normal(k5, (n_ob, n_vb, n_ob, n_vb), dtype=dtype)
-    c2aa = 0.5 * (c2aa + c2aa.transpose(2, 3, 0, 1))
-    c2bb = 0.5 * (c2bb + c2bb.transpose(2, 3, 0, 1))
+
+    # Antisymmetry
+    c2aa = 0.25 * (c2aa - jnp.einsum("iajb->jaib", c2aa) - jnp.einsum("iajb->ibja", c2aa) + jnp.einsum("iajb->jbia", c2aa))
+    c2bb = 0.25 * (c2bb - jnp.einsum("iajb->jaib", c2bb) - jnp.einsum("iajb->ibja", c2bb) + jnp.einsum("iajb->jbia", c2bb))
+
+    # Impossible
+    i, a, j, b = jnp.ogrid[:n_oa, :n_va, :n_oa, :n_va]
+    c2aa = jnp.where((i == j) | (a == b), 0.0, c2aa)
+
+    i, a, j, b = jnp.ogrid[:n_ob, :n_vb, :n_ob, :n_vb]
+    c2bb = jnp.where((i == j) | (a == b), 0.0, c2bb)
 
     c_a = jnp.eye(norb, norb)
     c_b = testing.rand_orthonormal_cols(k6, norb, norb, dtype=jnp.float64)
 
-    # Use high precision for the "testing" dtypes so the manual kernel is not
-    # artificially noisy from float32/complex64 paths.
     return UcisdTrial(
         mo_coeff_a=c_a,
         mo_coeff_b=c_b,
@@ -112,7 +119,8 @@ def test_auto_force_bias_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_cho
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
     [
-        ("unrestricted", 4, 2, 1, 5),
+        ("generalized", 6, 3, 2, 8),
+        ("unrestricted", 6, 3, 2, 8),
     ],
 )
 def test_auto_energy_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_chol):

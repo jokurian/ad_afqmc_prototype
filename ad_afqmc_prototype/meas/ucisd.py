@@ -6,11 +6,12 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax import tree_util
+from jax import lax, vmap
 
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
 from ..ham.chol import HamChol
-from ..trial.ucisd import UcisdTrial, overlap_u
+from ..trial.ucisd import UcisdTrial, overlap_u, overlap_g
 
 
 def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Array:
@@ -504,6 +505,449 @@ def energy_kernel_u(
     overlap = 1.0 + overlap_1 + overlap_2
     return (e1 + e2) / overlap + e0
 
+def energy_kernel_g(
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: UcisdMeasCtx,
+    trial_data: UcisdTrial,
+) -> jax.Array:
+    norb = trial_data.norb
+    n_mo = norb
+    n_oa, n_ob = trial_data.nocc
+    n_va, n_vb = trial_data.nvir
+    ci1A = trial_data.c1a
+    ci1B = trial_data.c1b
+    ci2AA = trial_data.c2aa
+    ci2AB = trial_data.c2ab
+    ci2BB = trial_data.c2bb
+    c_a = trial_data.mo_coeff_a
+    c_b = trial_data.mo_coeff_b
+
+    walker_ = jnp.vstack(
+        [walker[:n_mo], c_b.T.dot(walker[n_mo:, :])]
+    )  # put walker_dn in the basis of alpha reference
+
+    Atrial, Btrial = (
+        c_a[:, :n_oa],
+        c_b[:, :n_ob],
+    )
+
+    bra = jnp.block(
+        [
+            [Atrial, 0 * Btrial],
+            [
+                0 * Atrial,
+                (c_b.T @ c_b)[:, :n_ob],
+            ],
+        ]
+    )
+
+    # Half green function (U (V^\dag U)^{-1})^T
+    #        n_oa n_va n_ob n_vb
+    # n_oa (  1    2    3    4  )
+    # n_ob (  5    6    7    8  )
+    #
+    green = (walker_ @ jnp.linalg.inv(bra.T.conj() @ walker_)).T
+
+    # (1, 2)
+    green_aa = green[:n_oa, :n_mo]
+    # (7, 8)
+    green_bb = green[n_oa:, n_mo:]
+    # (3, 4)
+    green_ab = green[:n_oa, n_mo:]
+    # (5, 6)
+    green_ba = green[n_oa:, :n_mo]
+
+    # (2)
+    green_occ_aa = green_aa[:, n_oa:]
+    # (8)
+    green_occ_bb = green_bb[:, n_ob:]
+    # (4)
+    green_occ_ab = green_ab[:, n_ob:]
+    # (6)
+    green_occ_ba = green_ba[:, n_oa:]
+
+    green_occ = jnp.block(
+        [[green_occ_aa, green_occ_ab], [green_occ_ba, green_occ_bb]]
+    )
+
+    greenp_aa = jnp.vstack((green_occ_aa, -jnp.eye(n_va)))
+    greenp_bb = jnp.vstack((green_occ_bb, -jnp.eye(n_vb)))
+    greenp_ab = jnp.vstack((green_occ_ab, -jnp.zeros((n_va, n_vb))))
+    greenp_ba = jnp.vstack((green_occ_ba, -jnp.zeros((n_vb, n_va))))
+
+    greenp = jnp.block([[greenp_aa, greenp_ab], [greenp_ba, greenp_bb]])
+
+    h1_aa = ham_data.h1
+    h1_bb = meas_ctx.h1_b
+    #h1 = la.block_diag(h1_aa, h1_bb)
+
+    rot_h1_aa = h1_aa[:n_oa, :]
+    rot_h1_bb = h1_bb[:n_ob, :]
+    #rot_h1 = la.block_diag(rot_h1_aa, rot_h1_bb)
+
+    chol_aa = ham_data.chol
+    chol_bb = meas_ctx.chol_b
+    nchol = jnp.shape(chol_aa)[0]
+
+    #def chol_block(i):
+    #    return la.block_diag(chol_aa[i], chol_bb[i])
+
+    #chol = jax.vmap(chol_block)(jnp.arange(nchol))
+
+    rot_chol_aa = chol_aa[:, :n_oa, :]
+    rot_chol_bb = chol_bb[:, :n_ob, :]
+
+    #def rot_chol_block(i):
+    #    return la.block_diag(rot_chol_aa[i], rot_chol_bb[i])
+
+    #rot_chol = jax.vmap(rot_chol_block)(jnp.arange(nchol))
+
+    #ci1 = la.block_diag(ci1A, ci1B)
+
+    #ci2 = jnp.zeros((n_oa + n_ob, n_va + n_vb, n_oa + n_ob, n_va + n_vb))
+    #ci2 = lax.dynamic_update_slice(ci2, ci2AA, (0, 0, 0, 0))
+    #ci2 = lax.dynamic_update_slice(ci2, ci2BB, (n_oa, n_va, n_oa, n_va))
+    #ci2 = lax.dynamic_update_slice(ci2, ci2AB, (0, 0, n_oa, n_va))
+    #ci2 = lax.dynamic_update_slice(
+    #    ci2, -jnp.einsum("iajb->jaib", ci2AB), (n_oa, 0, 0, n_va)
+    #)
+    #ci2 = lax.dynamic_update_slice(
+    #    ci2, -jnp.einsum("iajb->ibja", ci2AB), (0, n_va, n_oa, 0)
+    #)
+    #ci2 = lax.dynamic_update_slice(
+    #    ci2, jnp.einsum("iajb->jbia", ci2AB), (n_oa, n_va, 0, 0)
+    #)
+
+    GRCaa = jnp.einsum("ir,gpr->igp", green[:,:n_mo], rot_chol_aa)
+    GRCbb = jnp.einsum("ir,gpr->igp", green[:,n_mo:], rot_chol_bb)
+    GRC = jnp.concatenate((GRCaa, GRCbb), axis=2)
+
+    GCaa = jnp.einsum("ps,gqs->pgq", green[:,:n_mo], chol_aa)
+    GCbb = jnp.einsum("ps,gqs->pgq", green[:,n_mo:], chol_bb)
+    GC = jnp.concatenate((GCaa, GCbb), axis=2)
+
+    GC_GRC = jnp.einsum("pgq,igp->qi", GC, GRC)
+
+    GRC_gaa = jnp.einsum("qs,gqs->g", green[:n_oa, :n_mo], rot_chol_aa)
+    GRC_gbb = jnp.einsum("qs,gqs->g", green[n_oa:, n_mo:], rot_chol_bb)
+    GRC_g = GRC_gaa + GRC_gbb
+
+    GpC1aa = jnp.einsum("qa,ia->qi", greenp[:,:n_va], ci1A)
+    GpC1bb = jnp.einsum("qa,ia->qi", greenp[:,n_va:], ci1B)
+    GpC1 = jnp.concatenate((GpC1aa, GpC1bb), axis=1)
+
+    GoC1aa = jnp.einsum("ia,ia->", green_occ[:n_oa,:n_va], ci1A)
+    GoC1bb = jnp.einsum("ia,ia->", green_occ[n_oa:,n_va:], ci1B)
+    GoC1 = GoC1aa+GoC1bb
+
+    GpC1G = jnp.einsum("qi,is->qs", GpC1, green)
+    GpC1GCaa = jnp.einsum("qs,gqs->g", GpC1G[:n_mo,:n_mo], chol_aa)
+    GpC1GCbb = jnp.einsum("qs,gqs->g", GpC1G[n_mo:,n_mo:], chol_bb)
+    GpC1GC = GpC1GCaa + GpC1GCbb
+
+    Caaaa = jnp.einsum("ja,iajb->ib", green_occ[:n_oa, :n_va], ci2AA)
+    Caabb = jnp.einsum("ja,iajb->ib", green_occ[n_oa:, :n_va], ci2AB)
+    Cbbaa = jnp.einsum("ja,iajb->ib", green_occ[:n_oa, n_va:], jnp.einsum("iajb->jbia", ci2AB))
+    Cabba = jnp.einsum("ja,iajb->ib", green_occ[n_oa:, n_va:], -jnp.einsum("iajb->ibja", ci2AB))
+    Cbaab = jnp.einsum("ja,iajb->ib", green_occ[:n_oa, :n_va], -jnp.einsum("iajb->jaib", ci2AB))
+    Cbbbb = jnp.einsum("ja,iajb->ib", green_occ[n_oa:, n_va:], ci2BB)
+    CGo = jnp.zeros((n_oa + n_ob, n_va + n_vb), dtype=Caaaa.dtype)
+    CGo = lax.dynamic_update_slice(CGo, Caaaa+Cabba, (0, 0))
+    CGo = lax.dynamic_update_slice(CGo, Caabb, (0, n_va))
+    CGo = lax.dynamic_update_slice(CGo, Cbbaa, (n_oa, 0))
+    CGo = lax.dynamic_update_slice(CGo, Cbbbb+Cbaab, (n_oa, n_va))
+
+    # 0 body energy
+    e0 = ham_data.h0
+
+    # 1 body energy
+    # ref
+    e1_0aa = jnp.einsum("pq,pq->", rot_h1_aa, green[:n_oa, :n_mo])
+    e1_0bb = jnp.einsum("pq,pq->", rot_h1_bb, green[n_oa:, n_mo:])
+    e1_0 = e1_0aa + e1_0bb
+
+    # single excitations
+    # e1_1 = jnp.einsum("pq,ia,pq,ia->", rot_h1, ci1.conj(), green, green_occ)
+    #e1_1_0 = jnp.einsum("pq,ia,pq,ia->", rot_h1, ci1, green, green_occ)
+
+    Aaa = jnp.einsum("pq,pq->", rot_h1_aa, green[:n_oa, :n_mo])
+    Abb = jnp.einsum("pq,pq->", rot_h1_bb, green[n_oa:, n_mo:])
+    A = Aaa+Abb
+
+    Baa = jnp.einsum("ia,ia->", ci1A, green_occ[:n_oa, :n_va])
+    Bbb = jnp.einsum("ia,ia->", ci1B, green_occ[n_oa:, n_va:])
+    B = Baa + Bbb
+    e1_1_0 = A * B
+
+    # e1_1 -= jnp.einsum("pq,ia,iq,pa->", h1, ci1.conj(), green, greenp)
+    #e1_1_1 = -jnp.einsum("pq,ia,iq,pa->", h1, ci1, green, greenp)
+
+    Aaa = jnp.einsum("iq,pq->ip", green[:,:n_mo], h1_aa)
+    Abb = jnp.einsum("iq,pq->ip", green[:,n_mo:], h1_bb)
+    A = jnp.concatenate((Aaa, Abb), axis=1)
+    B = jnp.einsum("ip,pa->ia", A, greenp)
+    e1_1_1aa = -jnp.einsum("ia,ia->", B[:n_oa, :n_va], ci1A)
+    e1_1_1bb = -jnp.einsum("ia,ia->", B[n_oa:, n_va:], ci1B)
+    e1_1_1 = e1_1_1aa + e1_1_1bb
+
+    e1_1 = e1_1_0 + e1_1_1
+
+    ## double excitations
+    # e1_2 = 2.0 * jnp.einsum("rq,rq,iajb,ia,jb", rot_h1, green, ci2.conj(), green_occ, green_occ)
+    #e1_2_0 = 2.0 * jnp.einsum(
+    #    "rq,rq,iajb,ia,jb", rot_h1, green, ci2, green_occ, green_occ
+    #)
+
+    Aaa = jnp.einsum("rq,rq->", rot_h1_aa, green[:n_oa, :n_mo])
+    Abb = jnp.einsum("rq,rq->", rot_h1_bb, green[n_oa:, n_mo:])
+    A = Aaa+ Abb
+
+    e1_2_0 = 2.0 * A * jnp.einsum(
+        "jb,jb", -CGo, green_occ
+    )
+
+    # e1i_2 -= 4.0 * jnp.einsum("pq,iajb,pa,iq,jb", h1, ci2.conj(), greenp, green, green_occ)
+    #e1_2_1 = -4.0 * jnp.einsum(
+    #    "pq,iajb,pa,iq,jb", h1, ci2, greenp, green, green_occ
+    #)
+
+    Aaa = jnp.einsum("iq,pq->ip", green[:, :n_mo], h1_aa)
+    Abb = jnp.einsum("iq,pq->ip", green[:, n_mo:], h1_bb)
+    A = jnp.concatenate((Aaa, Abb), axis=1)
+
+    e1_2_1 = -4.0 * jnp.einsum("ip,ia,pa", A, -CGo, greenp)
+
+    e1_2 = e1_2_0 + e1_2_1
+    e1_2 *= 0.25
+
+    # 2 body energy
+    # ref
+    #f = jnp.einsum("gij,jk->gik", rot_chol, green.T, optimize="optimal")
+    faa = jnp.einsum("gij,jk->gik", rot_chol_aa, green[:,:n_mo].T, optimize="optimal")
+    fbb = jnp.einsum("gij,jk->gik", rot_chol_bb, green[:,n_mo:].T, optimize="optimal")
+    f = jnp.concatenate((faa, fbb), axis=1)
+    c = vmap(jnp.trace)(f)
+    exc = jnp.sum(vmap(lambda x: x * x.T)(f))
+    e2_0 = (jnp.sum(c * c) - exc) / 2.0
+
+    # single excitations
+    # e2_1 = jnp.einsum( "gpr,gqs,ia,ir,ps,qa->", chol[:, :nocc, :], chol[:, :, :], ci1.conj(), green, green, greenp)
+    #e2_1 = jnp.einsum(
+    #    "gpr,gqs,ia,ir,ps,qa->", rot_chol, chol, ci1, green, green, greenp
+    #)
+
+    A = jnp.einsum("qi,qa->ia", GC_GRC, greenp)
+
+    e2_1aa = jnp.einsum("ia,ia->", A[:n_oa, :n_va], ci1A)
+    e2_1bb = jnp.einsum("ia,ia->", A[n_oa:, n_va:], ci1B)
+
+    e2_1 = e2_1aa + e2_1bb
+
+    # e2_1 -= jnp.einsum( "gpr,gqs,ia,pr,is,qa->", chol[:, :nocc, :], chol[:, :, :], ci1.conj(), green, green, greenp)
+    #e2_1 -= jnp.einsum(
+    #    "gpr,gqs,ia,pr,is,qa->", rot_chol, chol, ci1, green, green, greenp
+    #)
+
+    e2_1 -= jnp.einsum("g,g->", GRC_g, GpC1GC)
+
+    # e2_1 -= jnp.einsum( "gpr,gqs,ia,ir,pa,qs->", chol[:, :, :], chol[:, :nocc, :], ci1.conj(), green, greenp, green)
+    #e2_1 -= jnp.einsum(
+    #    "gpr,gqs,ia,ir,pa,qs->", chol, rot_chol, ci1, green, greenp, green
+    #)
+
+    e2_1 -= jnp.einsum("g,g->", GpC1GC, GRC_g)
+
+    # e2_1 += jnp.einsum( "gpr,gqs,ia,qr,is,pa->", chol[:, :, :], chol[:, :nocc, :], ci1.conj(), green, green, greenp)
+    #e2_1 += jnp.einsum(
+    #    "gpr,gqs,ia,qr,is,pa->", chol, rot_chol, ci1, green, green, greenp
+    #)
+
+    e2_1 += e2_1aa + e2_1bb
+
+    # e2_1 += jnp.einsum( "gpr,gqs,ia,pr,ia,qs->", chol[:, :nocc, :], chol[:, :nocc, :], ci1.conj(), green, green_occ, green)
+    #e2_1 += jnp.einsum(
+    #    "gpr,gqs,ia,pr,ia,qs->", rot_chol, rot_chol, ci1, green, green_occ, green
+    #)
+
+    e2_1 += GoC1 * jnp.einsum("g,g->", GRC_g, GRC_g)
+
+    # e2_1 -= jnp.einsum( "gpr,gqs,ia,qr,ia,ps->", chol[:, :nocc, :], chol[:, :nocc, :], ci1.conj(), green, green_occ, green)
+    #e2_1 -= jnp.einsum(
+    #    "gpr,gqs,ia,qr,ia,ps->", rot_chol, rot_chol, ci1, green, green_occ, green
+    #)
+
+    Aaa = jnp.einsum("qgp,gqs->ps", GRC[:n_oa,:,:], rot_chol_aa)
+    Abb = jnp.einsum("qgp,gqs->ps", GRC[n_oa:,:,:], rot_chol_bb)
+    A = jnp.concatenate((Aaa, Abb), axis=1)
+
+    e2_1 -= GoC1 * jnp.einsum("ps,ps->", A, green)
+
+    e2_1 *= 0.5
+
+    ## double excitations
+    # e2_2 = 2.0 * jnp.einsum("gpr,gqs,iajb,ir,js,pa,qb->", chol, chol, ci2.conj(), green, green, greenp, greenp)
+    #e2_2 = 2.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,ir,js,pa,qb->", chol, chol, ci2, green, green, greenp, greenp
+    #)
+
+    B = jnp.einsum("igp,pa->iga", GC, greenp)
+
+    Caaaa = jnp.einsum("iga,iajb->gjb", B[:n_oa, :, :n_va], ci2AA)
+    Caabb = jnp.einsum("iga,iajb->gjb", B[:n_oa, :, :n_va], ci2AB)
+    Cbbaa = jnp.einsum("iga,iajb->gjb", B[n_oa:, :, n_va:], jnp.einsum("iajb->jbia", ci2AB))
+    Cabba = jnp.einsum("iga,iajb->gjb", B[:n_oa, :, n_va:], -jnp.einsum("iajb->ibja", ci2AB))
+    Cbaab = jnp.einsum("iga,iajb->gjb", B[n_oa:, :, :n_va], -jnp.einsum("iajb->jaib", ci2AB))
+    Cbbbb = jnp.einsum("iga,iajb->gjb", B[n_oa:, :, n_va:], ci2BB)
+
+    C = jnp.zeros((nchol, n_oa+n_ob, n_va+n_vb), dtype=Caaaa.dtype)
+    C = lax.dynamic_update_slice(C, Caaaa+Cbbaa, (0, 0, 0))
+    C = lax.dynamic_update_slice(C, Cabba, (0, n_oa, 0))
+    C = lax.dynamic_update_slice(C, Cbaab, (0, 0, n_va))
+    C = lax.dynamic_update_slice(C, Cbbbb+Caabb, (0, n_oa, n_va))
+
+    D = jnp.einsum("gjb,qb->gjq", C, greenp)
+
+    Eaa = jnp.einsum("gjq,gqs->js", D[:,:,:n_mo], chol_aa)
+    Ebb = jnp.einsum("gjq,gqs->js", D[:,:,n_mo:], chol_bb)
+    E = jnp.concatenate((Eaa, Ebb), axis=1)
+
+    e2_2 = 2.0 * jnp.einsum("js,js->", E, green)
+
+    # e2_2 -= 2.0 * jnp.einsum("gpr,gqs,iajb,ir,ps,ja,qb->", chol[:, :nocc, :], chol, ci2.conj(), green, green, green_occ, greenp)
+    #e2_2 -= 2.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,ir,ps,ja,qb->",
+    #    rot_chol,
+    #    chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    greenp,
+    #)
+
+    e2_2 -= 2.0 * jnp.einsum("igp,pgq,ib,qb->", GRC, GC, CGo, greenp)
+
+    # e2_2 += 2.0 * jnp.einsum("gpr,gqs,iajb,ir,qs,ja,pb->", chol, chol[:, :nocc, :], ci2.conj(), green, green, green_occ, greenp)
+    #e2_2 += 2.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,ir,qs,ja,pb->",
+    #    chol,
+    #    rot_chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    greenp,
+    #)
+
+    B = jnp.einsum("ib,pb->ip", CGo, greenp)
+    C = jnp.einsum("ip,ir->pr", B, green)
+
+    Iaa = jnp.einsum("pr,gpr->g", C[:n_mo,:n_mo], chol_aa)
+    Ibb = jnp.einsum("pr,gpr->g", C[n_mo:,n_mo:], chol_bb)
+    I = Iaa+ Ibb
+
+    e2_2 += 2.0 * jnp.einsum("g,g->", I, GRC_g)
+
+    ## P_ij
+    e2_2 *= 2.0
+
+    # e2_2 += 4.0 * jnp.einsum("gpr,gqs,iajb,pr,is,ja,qb->", chol[:, :nocc, :], chol, ci2.conj(), green, green, green_occ, greenp)
+    #e2_2 += 4.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,pr,is,ja,qb->",
+    #    rot_chol,
+    #    chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    greenp,
+    #)
+
+    e2_2 += 4.0 * jnp.einsum(
+        "g,g->",
+        GRC_g,
+        I,
+    )
+
+    # e2_2 += 2.0 * jnp.einsum("gpr,gqs,iajb,pr,qs,ia,jb->", chol[:, :nocc, :], chol[:, :nocc, :], ci2.conj(), green, green, green_occ, green_occ)
+    #e2_2 += 2.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,pr,qs,ia,jb->",
+    #    rot_chol,
+    #    rot_chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    green_occ,
+    #)
+
+    e2_2 += 2.0 * jnp.einsum(
+        "g,g,jb,jb->",
+        GRC_g,
+        GRC_g,
+        -CGo, # - because ia,iajb->jb instead of ja,iajb->ib
+        green_occ,
+    )
+
+    ## P_pq
+    # e2_2 -= 4.0 * jnp.einsum("gpr,gqs,iajb,qr,is,ja,pb->", chol, chol[:, :nocc, :], ci2.conj(), green, green, green_occ, greenp)
+    #e2_2 -= 4.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,qr,is,ja,pb->",
+    #    chol,
+    #    rot_chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    greenp,
+    #)
+
+    e2_2 -= 4.0 * jnp.einsum(
+        "pi,ib,pb->",
+        GC_GRC,
+        CGo,
+        greenp,
+    )
+
+    # e2_2 -= 2.0 * jnp.einsum("gpr,gqs,iajb,qr,ps,ia,jb->", chol[:, :nocc, :], chol[:, :nocc, :], ci2.conj(), green, green, green_occ, green_occ)
+    #e2_2 -= 2.0 * jnp.einsum(
+    #    "gpr,gqs,iajb,qr,ps,ia,jb->",
+    #    rot_chol,
+    #    rot_chol,
+    #    ci2,
+    #    green,
+    #    green,
+    #    green_occ,
+    #    green_occ,
+    #)
+
+    Aaa = jnp.einsum("qgp,gqs->ps", GRC[:n_oa,:,:], rot_chol_aa)
+    Abb = jnp.einsum("qgp,gqs->ps", GRC[n_oa:,:,:], rot_chol_bb)
+    A = jnp.concatenate((Aaa, Abb), axis=1)
+
+    e2_2 -= 2.0 * jnp.einsum(
+        "ps,jb,ps,jb->",
+        A,
+        -CGo,
+        green,
+        green_occ,
+    )
+
+    e2_2 *= 0.5 * 0.25
+
+    e = e1_0 + e1_1 + e1_2 + e2_0 + e2_1 + e2_2
+    o1 = jnp.einsum("ia,ia", ci1A, green_occ_aa) + jnp.einsum(
+        "ia,ia", ci1B, green_occ_bb
+    )
+    o2 = jnp.einsum("iajb, ia, jb", ci2AA, green_occ_aa, green_occ_aa)
+    o2 += jnp.einsum("iajb, ia, jb", ci2BB, green_occ_bb, green_occ_bb)
+    o2 += 2.0 * jnp.einsum("iajb, ia, jb", ci2AB, green_occ_aa, green_occ_bb)
+    o2 -= 2.0 * jnp.einsum("iajb, ib, ja", ci2AB, green_occ_ab, green_occ_ba)
+    overlap = 1.0 + o1 + 0.5 * o2
+    e = e / overlap
+
+    return e + e0
 
 def build_meas_ctx(ham_data: HamChol, trial_data: UcisdTrial) -> UcisdMeasCtx:
     if ham_data.basis != "restricted":
@@ -560,6 +1004,10 @@ def make_ucisd_meas_ops(sys: System) -> MeasOps:
         )
 
     if wk == "generalized":
-        raise NotImplementedError
+        return MeasOps(
+            overlap=overlap_g,
+            build_meas_ctx=build_meas_ctx,
+            kernels={k_energy: energy_kernel_g},
+        )
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")

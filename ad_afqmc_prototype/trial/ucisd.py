@@ -125,6 +125,74 @@ def overlap_u(walker: tuple[jax.Array, jax.Array], trial_data: UcisdTrial) -> ja
     return (1.0 + o1 + o2) * o0
 
 
+def overlap_g(walker: jax.Array, trial_data: UcisdTrial) -> jax.Array:
+    n_oa, n_ob = trial_data.nocc
+    norb = trial_data.norb
+    c1a = trial_data.c1a
+    c1b = trial_data.c1b
+    c2aa = trial_data.c2aa
+    c2ab = trial_data.c2ab
+    c2bb = trial_data.c2bb
+    c_a = trial_data.mo_coeff_a
+    c_b = trial_data.mo_coeff_b
+
+    noccA, ci1A, ci2AA = n_oa, c1a, c2aa
+    noccB, ci1B, ci2BB = n_ob, c1b, c2bb
+    ci2AB = c2ab
+    nelec = (n_oa, n_ob)
+
+    walker_ = jnp.vstack(
+        [
+            walker[: norb],
+            c_b.T.dot(walker[norb :, :]),
+        ]
+    )  # put walker_dn in the basis of alpha reference
+
+    Atrial, Btrial = (
+        c_a[:, :noccA],
+        c_b[:, :noccB],
+    )
+    bra = jnp.block([[Atrial, 0 * Btrial], [0 * Atrial, Btrial]])
+    o0 = jnp.linalg.det(bra.T.conj() @ walker)
+
+    bra = jnp.block(
+        [
+            [Atrial, 0 * Btrial],
+            [
+                0 * Atrial,
+                (c_b.T @ c_b)[:, :noccB],
+            ],
+        ]
+    )
+
+    gf = (walker_ @ jnp.linalg.inv(bra.T.conj() @ walker_) @ bra.T.conj()).T
+
+    gfA, gfB = (
+        gf[: nelec[0], : norb],
+        gf[norb : norb + nelec[1], norb :],
+    )
+    gfAB, gfBA = (
+        gf[: nelec[0], norb :],
+        gf[norb : norb + nelec[1], : norb],
+    )
+
+    o1 = jnp.einsum("ia,ia", ci1A, gfA[:, noccA:]) + jnp.einsum(
+        "ia,ia", ci1B, gfB[:, noccB:]
+    )
+
+    # AA
+    o2 = jnp.einsum("iajb, ia, jb", ci2AA, gfA[:, noccA:], gfA[:, noccA:])
+
+    # BB
+    o2 += jnp.einsum("iajb, ia, jb", ci2BB, gfB[:, noccB:], gfB[:, noccB:])
+
+    # AB
+    o2 += 2.0 * jnp.einsum("iajb, ia, jb", ci2AB, gfA[:, noccA:], gfB[:, noccB:])
+    o2 -= 2.0 * jnp.einsum("iajb, ib, ja", ci2AB, gfAB[:, noccB:], gfBA[:, noccA:])
+
+    return (1.0 + o1 + 0.5 * o2) * o0
+
+
 def make_ucisd_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
@@ -135,6 +203,6 @@ def make_ucisd_trial_ops(sys: System) -> TrialOps:
         return TrialOps(overlap=overlap_u, get_rdm1=get_rdm1)
 
     if wk == "generalized":
-        raise NotImplementedError
+        return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
