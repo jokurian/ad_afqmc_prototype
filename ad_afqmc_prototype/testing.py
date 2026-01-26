@@ -11,9 +11,18 @@ def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
     Random (nrow, ncol) matrix with orthonormal columns via QR.
     """
     k1, k2 = jax.random.split(key)
-    a = jax.random.normal(
-        k1, (nrow, ncol), dtype=jnp.float64
-    ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
+
+    if dtype in (jnp.complex128, jnp.complex64):
+        a = jax.random.normal(
+            k1, (nrow, ncol), dtype=jnp.float64
+        ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
+    elif dtype in (jnp.float64, jnp.float32):
+        a = jax.random.normal(
+            k1, (nrow, ncol), dtype=jnp.float64
+        )
+    else:
+        raise TypeError(f"Received unsupported type {dtype}.")
+
     q, _ = jnp.linalg.qr(a, mode="reduced")
     return q.astype(dtype)
 
