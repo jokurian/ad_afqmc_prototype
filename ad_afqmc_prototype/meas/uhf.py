@@ -19,9 +19,15 @@ def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Ar
     """
     return jnp.linalg.solve(ovlp_mat.T, w.T)
 
+def _build_bra_generalized(trial_data: UhfTrial)-> jax.Array:
+    Atrial = trial_data.mo_coeff_a
+    Btrial = trial_data.mo_coeff_b
+    bra = jnp.block([[Atrial, 0 * Btrial], [0 * Atrial, Btrial]])
+    return bra
+
 def force_bias_kernel_r(
     walker: jax.Array,
-    ham_data: Any,
+    ham_data: HamChol,
     meas_ctx: UhfMeasCtx,
     trial_data: UhfTrial,
 ) -> jax.Array: 
@@ -42,7 +48,7 @@ def force_bias_kernel_r(
 
 def force_bias_kernel_u(
     walker: tuple[jax.Array, jax.Array],
-    ham_data: Any,
+    ham_data: HamChol,
     meas_ctx: UhfMeasCtx,
     trial_data: UhfTrial,
 ) -> jax.Array:
@@ -60,6 +66,30 @@ def force_bias_kernel_u(
     )
     return fb_u + fb_d
 
+def force_bias_kernel_g(
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    w = walker
+    norb = trial_data.norb
+    na, nb = trial_data.nocc
+
+    bra = _build_bra_generalized(trial_data)
+    g = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
+
+    g_aa, g_bb = g[:na, :norb], g[na:, norb:]
+    g_ab, g_ba = g[:na, norb:], g[na:, :norb]
+
+    rot_chol_aa = meas_ctx.rot_chol_a
+    rot_chol_bb = meas_ctx.rot_chol_b
+
+    fb  = jnp.einsum("gij,ij->g", rot_chol_aa, g_aa, optimize="optimal")
+    fb += jnp.einsum("gij,ij->g", rot_chol_bb, g_bb, optimize="optimal")
+
+    return fb
+
 def energy_kernel_r(
     walker: jax.Array,
     ham_data: HamChol,
@@ -74,10 +104,9 @@ def energy_kernel_r(
     gd = _half_green_from_overlap_matrix(w, md)
 
     e0 = ham_data.h0
-    e1 = jnp.sum(
-        gu * meas_ctx.rot_h1_a
-    ) + jnp.sum(
-        gd * meas_ctx.rot_h1_b
+    e1 = (
+        jnp.sum(gu * meas_ctx.rot_h1_a)
+        + jnp.sum(gd * meas_ctx.rot_h1_b)
     )
 
     f_up = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_a, gu.T, optimize="optimal")
@@ -110,10 +139,9 @@ def energy_kernel_u(
     gd = _half_green_from_overlap_matrix(wd, md)
 
     e0 = ham_data.h0
-    e1 = jnp.sum(
-        gu * meas_ctx.rot_h1_a
-    ) + jnp.sum(
-        gd * meas_ctx.rot_h1_b
+    e1 = (
+        jnp.sum(gu * meas_ctx.rot_h1_a)
+        + jnp.sum(gd * meas_ctx.rot_h1_b)
     )
 
     f_up = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_a, gu.T, optimize="optimal")
@@ -140,18 +168,18 @@ def energy_kernel_g(
     trial_data: UhfTrial,
 ) -> jax.Array:
     w = walker
-    e0 = ham_data.h0
-
-    Atrial, Btrial = trial_data.mo_coeff_a, trial_data.mo_coeff_b
-    bra = jnp.block([[Atrial, 0 * Btrial], [0 * Atrial, Btrial]])
-    m = bra.T.conj() @ walker
-    g = _half_green_from_overlap_matrix(w, m)
-
     norb = trial_data.norb
     na, nb = trial_data.nocc
 
-    g_aa, g_bb = g[:na, :norb], g[na:, norb:]
-    g_ab, g_ba = g[:na, norb:], g[na:, :norb]
+    bra = _build_bra_generalized(trial_data)
+    g = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
+
+    g_aa = g[:na, :norb]
+    g_bb = g[na:, norb:]
+    g_ab = g[:na, norb:]
+    g_ba = g[na:, :norb]
+
+    e0 = ham_data.h0
 
     e1 = jnp.sum(g_aa * meas_ctx.rot_h1_a) + jnp.sum(g_bb * meas_ctx.rot_h1_b)
 
@@ -252,7 +280,7 @@ def make_uhf_meas_ops(sys: System) -> MeasOps:
         return MeasOps(
             overlap=overlap_g,
             build_meas_ctx=build_meas_ctx,
-            kernels={k_energy: energy_kernel_g},
+            kernels={k_force_bias: force_bias_kernel_g, k_energy: energy_kernel_g},
         )
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")

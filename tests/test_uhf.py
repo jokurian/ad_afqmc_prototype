@@ -13,7 +13,7 @@ from ad_afqmc_prototype.ham.chol import HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.uhf import make_uhf_meas_ops, build_meas_ctx
 from ad_afqmc_prototype.meas.uhf import energy_kernel_r, energy_kernel_u, energy_kernel_g
-from ad_afqmc_prototype.meas.uhf import force_bias_kernel_r, force_bias_kernel_u
+from ad_afqmc_prototype.meas.uhf import force_bias_kernel_r, force_bias_kernel_u, force_bias_kernel_g
 from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
 from ad_afqmc_prototype import testing
 
@@ -28,6 +28,7 @@ def _make_uhf_trial(key, norb, nup, ndn, dtype=jnp.complex128) -> UhfTrial:
     [
         ("restricted", 6, 2, 2, 8),
         ("unrestricted", 6, 2, 1, 8),
+        ("generalized", 6, 2, 1, 8),
     ],
 )
 def test_auto_force_bias_matches_manual_uhf(walker_kind, norb, nup, ndn, n_chol):
@@ -150,6 +151,47 @@ def test_force_bias_equal_when_wu_eq_wr():
         fbu = force_bias_kernel_u((wi, wi), ham, ctx, trial)
 
         assert jnp.allclose(fbr, fbu, atol=1e-12), (fbr, fbu)
+
+def test_force_bias_equal_when_wg_eq_wu():
+    norb = 6
+    nup, ndn = 2, 2
+    n_chol = 8
+    walker_kind = "unrestricted"
+
+    key = jax.random.PRNGKey(1)
+    key, k_w = jax.random.split(key)
+
+    (
+        sys,
+        ham,
+        trial,
+        ctx,
+    ) = testing.make_common_manual_only(
+        key,
+        walker_kind,
+        norb,
+        (nup, ndn),
+        n_chol,
+        make_trial_fn=_make_uhf_trial,
+        make_trial_fn_kwargs=dict(
+            norb=norb,
+            nup=nup,
+            ndn=ndn,
+        ),
+        make_trial_ops_fn=make_uhf_trial_ops,
+        build_meas_ctx_fn=build_meas_ctx,
+    )
+
+    for i in range(4):
+        wi = testing.make_walkers(jax.random.fold_in(k_w, i), sys)
+        fbu = force_bias_kernel_u(wi, ham, ctx, trial)
+        wa, wb = wi
+        wi = jnp.zeros((2*norb, nup+ndn), dtype=wa.dtype)
+        wi = lax.dynamic_update_slice(wi, wa, (0,0))
+        wi = lax.dynamic_update_slice(wi, wb, (norb,nup))
+        fbg = force_bias_kernel_g(wi, ham, ctx, trial)
+
+        assert jnp.allclose(fbu, fbg, atol=1e-12), (fbu, fbg)
 
 def test_energy_equal_when_wu_eq_wr():
     norb = 6
