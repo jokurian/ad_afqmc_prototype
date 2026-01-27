@@ -20,6 +20,38 @@ def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Ar
     """
     return jnp.linalg.solve(ovlp_mat.T, w.T)
 
+def _build_bra_generalized(trial_data: UcisdTrial)-> jax.Array:
+    n_oa, n_ob = trial_data.nocc
+    c_a = trial_data.mo_coeff_a
+    c_b = trial_data.mo_coeff_b
+
+    Atrial, Btrial = (
+        c_a[:, :n_oa],
+        c_b[:, :n_ob],
+    )
+
+    bra = jnp.block(
+        [
+            [Atrial, 0 * Btrial],
+            [
+                0 * Atrial,
+                (c_b.T @ c_b)[:, :n_ob],
+            ],
+        ]
+    )
+
+    return bra
+
+def _get_generalized_walker_in_alpha_basis(walker: jax.Array, trial_data: UcisdTrial) -> jax.Array:
+    norb = trial_data.norb
+    c_b = trial_data.mo_coeff_b
+
+    w = jnp.vstack(
+        [walker[:norb], c_b.T @ walker[norb:, :]]
+    )  # put walker_dn in the basis of alpha reference
+
+    return w
+
 @dataclass(frozen=True)
 class UcisdMeasCfg:
     memory_mode: str = "low"  # or Literal["low","high"]
@@ -113,19 +145,21 @@ def force_bias_kernel_u(
     wa, wb = walker
     n_oa, n_ob = trial_data.nocc
     n_va, n_vb = trial_data.nvir
-    ci1_a = trial_data.c1a
-    ci1_b = trial_data.c1b
-    ci2_aa = trial_data.c2aa
-    ci2_ab = trial_data.c2ab
-    ci2_bb = trial_data.c2bb
+    c1a = trial_data.c1a
+    c1b = trial_data.c1b
+    c2aa = trial_data.c2aa
+    c2ab = trial_data.c2ab
+    c2bb = trial_data.c2bb
     c_b = trial_data.mo_coeff_b
+
+    cfg = meas_ctx.cfg
 
     wb = c_b.T @ wb[:, :n_ob]
     woa = wa[:n_oa, :]  # (n_oa, n_oa)
     wob = wb[:n_ob, :]  # (n_ob, n_ob)
 
-    green_a = jnp.linalg.solve(woa.T, wa.T)  # (n_oa, norb)
-    green_b = jnp.linalg.solve(wob.T, wb.T)  # (n_ob, norb)
+    green_a = _half_green_from_overlap_matrix(wa, woa)  # (n_oa, norb)
+    green_b = _half_green_from_overlap_matrix(wb, wob)  # (n_ob, norb)
 
     green_occ_a = green_a[:, n_oa:].copy()
     green_occ_b = green_b[:, n_ob:].copy()
@@ -144,23 +178,23 @@ def force_bias_kernel_u(
     fb_0 = lg_a + lg_b
 
     # single excitations
-    ci1g_a = jnp.einsum("pt,pt->", ci1_a, green_occ_a, optimize="optimal")
-    ci1g_b = jnp.einsum("pt,pt->", ci1_b, green_occ_b, optimize="optimal")
+    ci1g_a = jnp.einsum("pt,pt->", c1a, green_occ_a, optimize="optimal")
+    ci1g_b = jnp.einsum("pt,pt->", c1b, green_occ_b, optimize="optimal")
     ci1g = ci1g_a + ci1g_b
     fb_1_1 = ci1g * lg
-    ci1gp_a = jnp.einsum("pt,it->pi", ci1_a, greenp_a, optimize="optimal")
-    ci1gp_b = jnp.einsum("pt,it->pi", ci1_b, greenp_b, optimize="optimal")
+    ci1gp_a = jnp.einsum("pt,it->pi", c1a, greenp_a, optimize="optimal")
+    ci1gp_b = jnp.einsum("pt,it->pi", c1b, greenp_b, optimize="optimal")
     gci1gp_a = jnp.einsum("pj,pi->ij", green_a, ci1gp_a, optimize="optimal")
     gci1gp_b = jnp.einsum("pj,pi->ij", green_b, ci1gp_b, optimize="optimal")
     fb_1_2 = -jnp.einsum(
         "gij,ij->g",
-        chol_a.astype(meas_ctx.cfg.mixed_real_dtype),
-        gci1gp_a.astype(meas_ctx.cfg.mixed_complex_dtype),
+        chol_a.astype(cfg.mixed_real_dtype),
+        gci1gp_a.astype(cfg.mixed_complex_dtype),
         optimize="optimal",
     ) - jnp.einsum(
         "gij,ij->g",
-        chol_b.astype(meas_ctx.cfg.mixed_real_dtype),
-        gci1gp_b.astype(meas_ctx.cfg.mixed_complex_dtype),
+        chol_b.astype(cfg.mixed_real_dtype),
+        gci1gp_b.astype(cfg.mixed_complex_dtype),
         optimize="optimal",
     )
     fb_1 = fb_1_1 + fb_1_2
@@ -168,23 +202,23 @@ def force_bias_kernel_u(
     # double excitations
     ci2g_a = jnp.einsum(
         "ptqu,pt->qu",
-        ci2_aa.astype(meas_ctx.cfg.mixed_real_dtype),
-        green_occ_a.astype(meas_ctx.cfg.mixed_complex_dtype),
+        c2aa.astype(cfg.mixed_real_dtype),
+        green_occ_a.astype(cfg.mixed_complex_dtype),
     )
     ci2g_b = jnp.einsum(
         "ptqu,pt->qu",
-        ci2_bb.astype(meas_ctx.cfg.mixed_real_dtype),
-        green_occ_b.astype(meas_ctx.cfg.mixed_complex_dtype),
+        c2bb.astype(cfg.mixed_real_dtype),
+        green_occ_b.astype(cfg.mixed_complex_dtype),
     )
     ci2g_ab_a = jnp.einsum(
         "ptqu,qu->pt",
-        ci2_ab.astype(meas_ctx.cfg.mixed_real_dtype),
-        green_occ_b.astype(meas_ctx.cfg.mixed_complex_dtype),
+        c2ab.astype(cfg.mixed_real_dtype),
+        green_occ_b.astype(cfg.mixed_complex_dtype),
     )
     ci2g_ab_b = jnp.einsum(
         "ptqu,pt->qu",
-        ci2_ab.astype(meas_ctx.cfg.mixed_real_dtype),
-        green_occ_a.astype(meas_ctx.cfg.mixed_complex_dtype),
+        c2ab.astype(cfg.mixed_real_dtype),
+        green_occ_a.astype(cfg.mixed_complex_dtype),
     )
     gci2g_a = 0.5 * jnp.einsum("qu,qu->", ci2g_a, green_occ_a, optimize="optimal")
     gci2g_b = 0.5 * jnp.einsum("qu,qu->", ci2g_b, green_occ_b, optimize="optimal")
@@ -195,14 +229,14 @@ def force_bias_kernel_u(
     ci2_green_b = (greenp_b @ (ci2g_b + ci2g_ab_b).T) @ green_b
     fb_2_2_a = -jnp.einsum(
         "gij,ij->g",
-        chol_a.astype(meas_ctx.cfg.mixed_real_dtype),
-        ci2_green_a.astype(meas_ctx.cfg.mixed_complex_dtype),
+        chol_a.astype(cfg.mixed_real_dtype),
+        ci2_green_a.astype(cfg.mixed_complex_dtype),
         optimize="optimal",
     )
     fb_2_2_b = -jnp.einsum(
         "gij,ij->g",
-        chol_b.astype(meas_ctx.cfg.mixed_real_dtype),
-        ci2_green_b.astype(meas_ctx.cfg.mixed_complex_dtype),
+        chol_b.astype(cfg.mixed_real_dtype),
+        ci2_green_b.astype(cfg.mixed_complex_dtype),
         optimize="optimal",
     )
     fb_2_2 = fb_2_2_a + fb_2_2_b
@@ -236,31 +270,15 @@ def force_bias_kernel_g(
 
     cfg = meas_ctx.cfg
 
-    w = jnp.vstack(
-        [walker[:norb], c_b.T @ walker[norb:, :]]
-    )  # put walker_dn in the basis of alpha reference
-
-    Atrial, Btrial = (
-        c_a[:, :n_oa],
-        c_b[:, :n_ob],
-    )
-
-    bra = jnp.block(
-        [
-            [Atrial, 0 * Btrial],
-            [
-                0 * Atrial,
-                (c_b.T @ c_b)[:, :n_ob],
-            ],
-        ]
-    )
+    w = _get_generalized_walker_in_alpha_basis(walker, trial_data)
+    bra = _build_bra_generalized(trial_data)
 
     # Half green function (U (V^\dag U)^{-1})^T
     #        n_oa n_va n_ob n_vb
     # n_oa (  1    2    3    4  )
     # n_ob (  5    6    7    8  )
     #
-    green = (w @ jnp.linalg.inv(bra.T.conj() @ w)).T
+    green = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
 
     # (1, 2)
     green_aa = green[:n_oa, :norb]
@@ -381,11 +399,11 @@ def energy_kernel_u(
     wa, wb = walker
     n_oa, n_ob = trial_data.nocc
     n_va, n_vb = trial_data.nvir
-    ci1_a = trial_data.c1a
-    ci1_b = trial_data.c1b
-    ci2_aa = trial_data.c2aa
-    ci2_ab = trial_data.c2ab
-    ci2_bb = trial_data.c2bb
+    c1a = trial_data.c1a
+    c1b = trial_data.c1b
+    c2aa = trial_data.c2aa
+    c2ab = trial_data.c2ab
+    c2bb = trial_data.c2bb
     c_b = trial_data.mo_coeff_b
 
     cfg = meas_ctx.cfg
@@ -394,8 +412,8 @@ def energy_kernel_u(
     woa = wa[:n_oa, :]  # (n_oa, n_oa)
     wob = wb[:n_ob, :]  # (n_ob, n_ob)
 
-    green_a = jnp.linalg.solve(woa.T, wa.T)  # (n_oa, norb)
-    green_b = jnp.linalg.solve(wob.T, wb.T)  # (n_ob, norb)
+    green_a = _half_green_from_overlap_matrix(wa, woa)  # (n_oa, norb)
+    green_b = _half_green_from_overlap_matrix(wb, wob)  # (n_ob, norb)
 
     green_occ_a = green_a[:, n_oa:].copy()
     green_occ_b = green_b[:, n_ob:].copy()
@@ -424,14 +442,14 @@ def energy_kernel_u(
     e1_0 = hg
 
     # single excitations
-    ci1g_a = jnp.einsum("pt,pt->", ci1_a, green_occ_a, optimize="optimal")
-    ci1g_b = jnp.einsum("pt,pt->", ci1_b, green_occ_b, optimize="optimal")
+    ci1g_a = jnp.einsum("pt,pt->", c1a, green_occ_a, optimize="optimal")
+    ci1g_b = jnp.einsum("pt,pt->", c1b, green_occ_b, optimize="optimal")
     ci1g = ci1g_a + ci1g_b
     e1_1_1 = ci1g * hg
-    gpci1_a = greenp_a @ ci1_a.T
-    gpci1_b = greenp_b @ ci1_b.T
-    ci1_green_a = gpci1_a @ green_a
-    ci1_green_b = gpci1_b @ green_b
+    gpc1a = greenp_a @ c1a.T
+    gpc1b = greenp_b @ c1b.T
+    ci1_green_a = gpc1a @ green_a
+    ci1_green_b = gpc1b @ green_b
     e1_1_2 = -(
         jnp.einsum("ij,ij->", h1_a, ci1_green_a, optimize="optimal")
         + jnp.einsum("ij,ij->", h1_b, ci1_green_b, optimize="optimal")
@@ -442,7 +460,7 @@ def energy_kernel_u(
     ci2g_a = (
         jnp.einsum(
             "ptqu,pt->qu",
-            ci2_aa.astype(cfg.mixed_real_dtype),
+            c2aa.astype(cfg.mixed_real_dtype),
             green_occ_a.astype(cfg.mixed_complex_dtype),
         )
         / 4
@@ -450,19 +468,19 @@ def energy_kernel_u(
     ci2g_b = (
         jnp.einsum(
             "ptqu,pt->qu",
-            ci2_bb.astype(cfg.mixed_real_dtype),
+            c2bb.astype(cfg.mixed_real_dtype),
             green_occ_b.astype(cfg.mixed_complex_dtype),
         )
         / 4
     )
     ci2g_ab_a = jnp.einsum(
         "ptqu,qu->pt",
-        ci2_ab.astype(cfg.mixed_real_dtype),
+        c2ab.astype(cfg.mixed_real_dtype),
         green_occ_b.astype(cfg.mixed_complex_dtype),
     )
     ci2g_ab_b = jnp.einsum(
         "ptqu,pt->qu",
-        ci2_ab.astype(cfg.mixed_real_dtype),
+        c2ab.astype(cfg.mixed_real_dtype),
         green_occ_a.astype(cfg.mixed_complex_dtype),
     )
     gci2g_a = jnp.einsum("qu,qu->", ci2g_a, green_occ_a, optimize="optimal")
@@ -516,8 +534,8 @@ def energy_kernel_u(
         optimize="optimal",
     )
     e2_1_2 = -((lci1g_a + lci1g_b) @ (lg_a + lg_b))
-    ci1g1_a = ci1_a @ green_occ_a.T
-    ci1g1_b = ci1_b @ green_occ_b.T
+    ci1g1_a = c1a @ green_occ_a.T
+    ci1g1_b = c1b @ green_occ_b.T
     e2_1_3_1 = jnp.einsum(
         "gpq,gqr,rp->", lg1_a, lg1_a, ci1g1_a, optimize="optimal"
     ) + jnp.einsum("gpq,gqr,rp->", lg1_b, lg1_b, ci1g1_b, optimize="optimal")
@@ -583,24 +601,24 @@ def energy_kernel_u(
                 "pt,qu,ptqu->",
                 glgp_a_i,
                 glgp_a_i,
-                ci2_aa.astype(cfg.mixed_real_dtype_testing),
+                c2aa.astype(cfg.mixed_real_dtype_testing),
                 optimize="optimal",
             )
             l2ci2_b = 0.5 * jnp.einsum(
                 "pt,qu,ptqu->",
                 glgp_b_i,
                 glgp_b_i,
-                ci2_bb.astype(cfg.mixed_real_dtype_testing),
+                c2bb.astype(cfg.mixed_real_dtype_testing),
                 optimize="optimal",
             )
-            l2ci2_ab = jnp.einsum(
+            l2c2ab = jnp.einsum(
                 "pt,qu,ptqu->",
                 glgp_a_i,
                 glgp_b_i,
-                ci2_ab.astype(cfg.mixed_real_dtype_testing),
+                c2ab.astype(cfg.mixed_real_dtype_testing),
                 optimize="optimal",
             )
-            carry[1] += l2ci2_a + l2ci2_b + l2ci2_ab
+            carry[1] += l2ci2_a + l2ci2_b + l2c2ab
             return carry, 0.0
 
         [e2_2_2_2, e2_2_3], _ = jax.lax.scan(
@@ -645,24 +663,24 @@ def energy_kernel_u(
             "gpt,gqu,ptqu->g",
             glgp_a,
             glgp_a,
-            ci2_aa.astype(cfg.mixed_real_dtype_testing),
+            c2aa.astype(cfg.mixed_real_dtype_testing),
             optimize="optimal",
         )
         l2ci2_b = 0.5 * jnp.einsum(
             "gpt,gqu,ptqu->g",
             glgp_b,
             glgp_b,
-            ci2_bb.astype(cfg.mixed_real_dtype_testing),
+            c2bb.astype(cfg.mixed_real_dtype_testing),
             optimize="optimal",
         )
-        l2ci2_ab = jnp.einsum(
+        l2c2ab = jnp.einsum(
             "gpt,gqu,ptqu->g",
             glgp_a,
             glgp_b,
-            ci2_ab.astype(cfg.mixed_real_dtype_testing),
+            c2ab.astype(cfg.mixed_real_dtype_testing),
             optimize="optimal",
         )
-        e2_2_3 = l2ci2_a.sum() + l2ci2_b.sum() + l2ci2_ab.sum()
+        e2_2_3 = l2ci2_a.sum() + l2ci2_b.sum() + l2c2ab.sum()
 
     e2_2_2 = e2_2_2_1 + e2_2_2_2
     e2_2 = e2_2_1 + e2_2_2 + e2_2_3
@@ -694,31 +712,15 @@ def energy_kernel_g(
 
     cfg = meas_ctx.cfg
 
-    w = jnp.vstack(
-        [walker[:norb], c_b.T @walker[norb:, :]]
-    )  # put walker_dn in the basis of alpha reference
-
-    Atrial, Btrial = (
-        c_a[:, :n_oa],
-        c_b[:, :n_ob],
-    )
-
-    bra = jnp.block(
-        [
-            [Atrial, 0 * Btrial],
-            [
-                0 * Atrial,
-                (c_b.T @ c_b)[:, :n_ob],
-            ],
-        ]
-    )
+    w = _get_generalized_walker_in_alpha_basis(walker, trial_data)
+    bra = _build_bra_generalized(trial_data)
 
     # Half green function (U (V^\dag U)^{-1})^T
     #        n_oa n_va n_ob n_vb
     # n_oa (  1    2    3    4  )
     # n_ob (  5    6    7    8  )
     #
-    green = (w @ jnp.linalg.inv(bra.T.conj() @ w)).T
+    green = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
 
     # (1, 2)
     green_aa = green[:n_oa, :norb]
