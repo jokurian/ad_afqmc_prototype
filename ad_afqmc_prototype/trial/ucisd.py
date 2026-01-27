@@ -96,6 +96,10 @@ def get_rdm1(trial_data: UcisdTrial) -> jax.Array:
     return jnp.stack([dm_a, dm_b], axis=0)  # (2, norb, norb)
 
 
+def overlap_r(walker: jax.Array, trial_data: UcisdTrial) -> jax.Array:
+    return overlap_u((walker, walker), trial_data)
+
+
 def overlap_u(walker: tuple[jax.Array, jax.Array], trial_data: UcisdTrial) -> jax.Array:
     wa, wb = walker
     n_oa, n_ob = trial_data.nocc
@@ -193,7 +197,7 @@ def make_ucisd_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
     if wk == "restricted":
-        raise NotImplementedError
+        return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1)
 
     if wk == "unrestricted":
         return TrialOps(overlap=overlap_u, get_rdm1=get_rdm1)

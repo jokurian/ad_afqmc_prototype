@@ -74,6 +74,7 @@ def _make_ucisd_trial(
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
     [
+        ("restricted", 4, 2, 2, 5),
         ("unrestricted", 4, 2, 1, 5),
         ("generalized", 4, 2, 1, 5),
     ],
@@ -121,8 +122,9 @@ def test_auto_force_bias_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_cho
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
     [
-        ("generalized", 6, 3, 2, 8),
+        ("restricted", 4, 2, 2, 5),
         ("unrestricted", 6, 3, 2, 8),
+        ("generalized", 6, 3, 2, 8),
     ],
 )
 def test_auto_energy_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_chol):

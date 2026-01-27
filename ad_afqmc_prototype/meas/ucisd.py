@@ -11,7 +11,7 @@ from jax import lax, vmap
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
 from ..ham.chol import HamChol
-from ..trial.ucisd import UcisdTrial, overlap_u, overlap_g
+from ..trial.ucisd import UcisdTrial, overlap_r, overlap_u, overlap_g
 
 
 def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Array:
@@ -90,6 +90,17 @@ class UcisdMeasCtx:
             lci1_b=lci1_b,
             cfg=cfg,
         )
+
+
+def force_bias_kernel_r(
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: UcisdMeasCtx,
+    trial_data: UcisdTrial,
+) -> jax.Array:
+    """Calculates force bias < psi_T | chol_gamma | walker > / < psi_T | walker >"""
+    return force_bias_kernel_u((walker, walker), ham_data, meas_ctx, trial_data) 
+
 
 def force_bias_kernel_u(
     walker: tuple[jax.Array, jax.Array],
@@ -348,6 +359,15 @@ def force_bias_kernel_g(
     nu = nu / overlap
 
     return nu
+
+
+def energy_kernel_r(
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: UcisdMeasCtx,
+    trial_data: UcisdTrial,
+) -> jax.Array:
+    return energy_kernel_u((walker, walker), ham_data, meas_ctx, trial_data)
 
 
 def energy_kernel_u(
@@ -1220,7 +1240,11 @@ def build_meas_ctx(ham_data: HamChol, trial_data: UcisdTrial) -> UcisdMeasCtx:
 def make_ucisd_meas_ops(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
     if wk == "restricted":
-        raise NotImplementedError
+        return MeasOps(
+            overlap=overlap_r,
+            build_meas_ctx=build_meas_ctx,
+            kernels={k_force_bias: force_bias_kernel_r, k_energy: energy_kernel_r},
+        )
 
     if wk == "unrestricted":
         return MeasOps(
