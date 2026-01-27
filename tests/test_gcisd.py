@@ -108,7 +108,7 @@ def test_auto_force_bias_matches_manual_gcisd(walker_kind, norb, nup, ndn, n_cho
         ("generalized", 10, 4, 3, 12),
     ],
 )
-def test_auto_energy_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_chol):
+def test_auto_energy_matches_manual_gcisd(walker_kind, norb, nup, ndn, n_chol):
     key = jax.random.PRNGKey(0)
     key, k_w = jax.random.split(key)
 
