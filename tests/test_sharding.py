@@ -17,17 +17,7 @@ from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype.prop.chol_afqmc_ops import _build_prop_ctx, make_trotter_ops
 from ad_afqmc_prototype.prop.types import PropOps, QmcParams
 from ad_afqmc_prototype.sharding import make_data_mesh, shard_prop_state
-
-
-def _dummy_trial_ops() -> TrialOps:
-    def get_rdm1(trial_data):
-        return trial_data["rdm1"]
-
-    def overlap(walker, trial_data):
-        return jnp.asarray(1.0 + 0.0j, dtype=jnp.complex64)
-
-    return TrialOps(overlap=overlap, get_rdm1=get_rdm1)
-
+from ad_afqmc_prototype import testing
 
 def _dummy_meas_ops() -> MeasOps:
     def build_meas_ctx(_ham, _trial):
@@ -105,7 +95,7 @@ def test_block_runs_under_sharding(n_per_dev):
     )
     sys = System(norb=norb, nelec=(nocc, nocc), walker_kind="restricted")
 
-    trial_ops = _dummy_trial_ops()
+    trial_ops = testing.dummy_trial_ops()
     meas_ops = _dummy_meas_ops()
     trial_data = {"rdm1": jnp.zeros((2, norb, norb), dtype=jnp.float32)}
     meas_ctx = meas_ops.build_meas_ctx(ham, trial_data)
