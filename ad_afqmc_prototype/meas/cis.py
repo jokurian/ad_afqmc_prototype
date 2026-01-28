@@ -13,6 +13,7 @@ from ..ham.chol import HamChol, slice_ham_level
 from ..trial.cis import CisTrial
 from ..trial.cis import overlap_r
 from . import cisd
+from cisd import CisdMeasCtx
 
 def _greens_restricted(walker: jax.Array, nocc: int) -> jax.Array:
     wocc = walker[:nocc, :]  # (nocc, nocc)
