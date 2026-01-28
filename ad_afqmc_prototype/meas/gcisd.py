@@ -11,8 +11,7 @@ from jax import lax, vmap
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
 from ..ham.chol import HamChol
-from ..trial.ucisd import UcisdTrial, overlap_r, overlap_u, overlap_g
-
+from ..trial.gcisd import GcisdTrial, overlap_g
 
 def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Array:
     """

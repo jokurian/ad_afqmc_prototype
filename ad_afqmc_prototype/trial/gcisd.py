@@ -58,9 +58,6 @@ class GcisdTrial:
             c2=c2,
         )
 
-def _det(m: jax.Array) -> jax.Array:
-    return jnp.linalg.det(m)
-
 def get_rdm1(trial_data: GcisdTrial) -> jax.Array:
     """
     Return spin-block 1RDM for use by AFQMC propagator code that expects
