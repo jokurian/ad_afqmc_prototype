@@ -118,7 +118,7 @@ class MeasKernel(Protocol):
 # usual kernel names
 k_energy = "energy"
 k_force_bias = "force_bias"
-
+k_lnoenergy = "lnoenergy"
 
 @dataclass(frozen=True)
 class MeasOps:
