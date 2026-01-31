@@ -270,8 +270,8 @@ def make_trotter_ops(
             return TrotterOps(apply_trotter)
         raise ValueError(f"unknown walker_kind: {walker_kind}")
 
-    # ham_data.basis == "generalized" (so walker_kind must be generalized):
-    #apply_trotter = lambda w, f, ctx, n_terms, mv=make_vhs: _apply_trotter_r(
-    #    w, f, ctx, n_terms, make_vhs=mv
-    #)
+    elif ham_basis == "generalized": # (so walker_kind must be generalized):
+        apply_trotter = lambda w, f, ctx, n_terms, mv=make_vhs: _apply_trotter_r(
+            w, f, ctx, n_terms, make_vhs=mv
+        )
     return TrotterOps(apply_trotter)

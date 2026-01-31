@@ -59,19 +59,10 @@ class GcisdTrial:
         )
 
 def get_rdm1(trial_data: GcisdTrial) -> jax.Array:
-    """
-    Return spin-block 1RDM for use by AFQMC propagator code that expects
-    (2, norb, norb) for restricted basis Hamiltonians.
-
-    Note: This discards spin offdiagonal blocks in a true GHF density matrix.
-    """
     c = trial_data.mo_coeff
-    dm = c @ c.conj().T  # (2*norb, 2*norb)
-    norb = trial_data.norb
-    dm_up = dm[:norb, :norb]
-    dm_dn = dm[norb:, norb:]
-    return jnp.stack([dm_up, dm_dn], axis=0)  # (2, norb, norb)
-
+    nocc = trial_data.nocc
+    dm = c[:,:nocc] @ c[:,:nocc].conj().T  # (2*norb, 2*norb)
+    return dm
 
 def overlap_g(walker: jax.Array, trial_data: GcisdTrial) -> jax.Array:
     nocc = trial_data.nocc

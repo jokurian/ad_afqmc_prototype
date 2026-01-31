@@ -42,9 +42,9 @@ class GcisdMeasCtx:
             rot_chol_flat,
         ) = children
         return cls(
-            rot_h1_a=rot_h1,
-            rot_chol_a=rot_chol,
-            rot_chol_flat_a=rot_chol_flat,
+            rot_h1=rot_h1,
+            rot_chol=rot_chol,
+            rot_chol_flat=rot_chol_flat,
         )
 
 
