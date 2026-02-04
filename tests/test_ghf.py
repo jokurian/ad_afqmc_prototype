@@ -5,6 +5,7 @@ config.setup_jax()
 import jax
 import jax.numpy as jnp
 import pytest
+from pyscf import gto, scf
 
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.core.system import System
@@ -12,7 +13,10 @@ from ad_afqmc_prototype.ham.chol import HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.ghf import make_ghf_meas_ops_chol
 from ad_afqmc_prototype.trial.ghf import GhfTrial, make_ghf_trial_ops
+from ad_afqmc_prototype.prop.types import QmcParams
+from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype import testing
+from ad_afqmc_prototype.prep.pyscf_interface import get_trial_coeff
 
 def _make_ghf_trial(key, norb, nup, ndn, dtype=jnp.complex128) -> GhfTrial:
     ne = nup + ndn
@@ -118,6 +122,84 @@ def test_auto_energy_matches_manual_ghf(walker_kind, norb, nup, ndn, n_chol):
         ea = e_auto(wi, ham, ctx_auto, trial)
 
         assert jnp.allclose(ea, em, rtol=5e-6, atol=5e-7), (ea, em)
+
+
+def _prep(mf, walker_kind):
+    (
+        sys,
+        ham_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = testing.make_common_pyscf(
+        mf,
+        make_ghf_meas_ops_chol,
+        make_ghf_trial_ops,
+        walker_kind,
+        ham_basis="generalized",
+    )
+    
+    mo = get_trial_coeff(mf)
+    mo = mo[:, :sys.nup+sys.ndn]
+    trial_data = GhfTrial(mo)
+
+    return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
+
+@pytest.mark.parametrize("walker_kind, e_ref, err_ref",
+    [
+        ("generalized", -108.5246076693548, 0.002729354002421708),
+    ]
+)
+def test_calc_ghf_hamiltonian(mf, params, walker_kind, e_ref, err_ref):
+    (
+        sys,
+        ham_data,
+        trial_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = _prep(mf, walker_kind)
+
+    block_fn = block
+
+    mean, err, block_e_all, block_w_all = testing.run_calc(
+        sys,
+        meas_ops,
+        ham_data,
+        trial_ops,
+        trial_data,
+        params,
+        block_fn,
+        prop_ops,
+    )
+    assert jnp.isclose(mean, e_ref, atol=1e-6)
+    assert jnp.isclose(err, err_ref, atol=1e-6)
+
+@pytest.fixture(scope="module")
+def mf():
+    mol = gto.M(
+        atom="""
+        N 0.0000000 0.0000000 0.0000000
+        N 0.0000000 0.0000000 1.8000000
+        """,
+        basis="sto-6g",
+    )
+    mf = scf.GHF(mol)
+    mf.kernel()
+    mo = mf.stability()
+    dm1 = mf.make_rdm1(mo, mf.mo_occ)
+    mf = mf.run(dm1)
+    mf.stability()
+    return mf
+
+@pytest.fixture(scope="module")
+def params():
+    return QmcParams(
+        n_eql_blocks=10,
+        n_blocks=100,
+        seed=1234,
+        n_walkers=20,
+    )
 
 
 if __name__ == "__main__":
