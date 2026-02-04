@@ -15,7 +15,7 @@ from pyscf.cc.uccsd import UCCSD
 from pyscf.cc.gccsd import GCCSD
 
 # Temporary
-def get_integrals(mf):
+def get_integrals(mf, max_error=1e-6):
     if not isinstance(mf, (RHF, ROHF, UHF, GHF)):
         raise TypeError(f"Expected RHF, ROHF, UHF, or GHF but found {type(mf)}.")
     if not hasattr(mf, "mo_coeff"):
@@ -34,7 +34,7 @@ def get_integrals(mf):
     #eri = np.array(ao2mo.kernel(mol, mf.mo_coeff))
     #eri = ao2mo.restore(4, eri, mol.nao)
     #chol = integrals.modified_cholesky(eri, max_error=1e-6)
-    chol_vec = integrals.chunked_cholesky(mol)  
+    chol_vec = integrals.chunked_cholesky(mol, max_error)
 
     nchol = chol_vec.shape[0]
 
@@ -92,8 +92,8 @@ def get_trial_coeff(mf):
 
 
 def get_cisd(cc):
-    if not isinstance(cc, (CCSD, GCCSD)):
-        raise TypeError(f"Expected CCSD or GCCSD, but found {type(cc)}.")
+    if not isinstance(cc, CCSD):
+        raise TypeError(f"Expected CCSD, but found {type(cc)}.")
     if not hasattr(cc, "t1") or not hasattr(cc, "t2"):
         raise ValueError(f"amplitudes not found, you may not have run the cc kernel.")
 
@@ -102,6 +102,23 @@ def get_cisd(cc):
 
     ci2 = jnp.array(ci2)
     ci1 = jnp.array(cc.t1)
+
+    return ci1, ci2
+
+def get_gcisd(cc):
+    if not isinstance(cc, GCCSD):
+        raise TypeError(f"Expected GCCSD, but found {type(cc)}.")
+    if not hasattr(cc, "t1") or not hasattr(cc, "t2"):
+        raise ValueError(f"amplitudes not found, you may not have run the cc kernel.")
+
+    ci2 = (
+        np.einsum("ijab->iajb", cc.t2)
+        + np.einsum("ia,jb->iajb", cc.t1, cc.t1)
+        - np.einsum("ib,ja->iajb", cc.t1, cc.t1)
+    )
+
+    ci1 = jnp.array(cc.t1)
+    ci2 = jnp.array(ci2)
 
     return ci1, ci2
 

@@ -7,6 +7,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import pytest
+from pyscf import gto, scf, cc
 
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.core.system import System
@@ -15,6 +16,10 @@ from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.cisd import make_cisd_meas_ops
 from ad_afqmc_prototype.trial.cisd import CisdTrial, make_cisd_trial_ops
 from ad_afqmc_prototype import testing
+from ad_afqmc_prototype.prop.types import QmcParams
+from ad_afqmc_prototype.prop.blocks import block
+from ad_afqmc_prototype.prep.pyscf_interface import get_cisd
+
 
 def _make_cisd_trial(
     key,
@@ -152,6 +157,80 @@ def test_auto_energy_matches_manual_cisd(norb, nocc, n_chol, memory_mode):
 
         assert jnp.allclose(ea, em, rtol=2e-5, atol=2e-6), (ea, em)
 
+
+def _prep(mycc, walker_kind):
+
+    mf = mycc._scf
+    (
+        sys,
+        ham_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = testing.make_common_pyscf(
+        mf,
+        make_cisd_meas_ops,
+        make_cisd_trial_ops,
+        walker_kind,
+    )
+
+    ci1, ci2 = get_cisd(mycc)
+    trial_data = CisdTrial(ci1, ci2)
+
+    return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
+
+@pytest.mark.parametrize("walker_kind, e_ref, err_ref", [
+        ("restricted", -108.7001058229754, 0.001538312358815003),
+    ]
+)
+def test_calc_rhf_hamiltonian(mycc, params, walker_kind, e_ref, err_ref):
+    (
+        sys,
+        ham_data,
+        trial_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = _prep(mycc, walker_kind)
+
+    block_fn = block
+
+    mean, err, block_e_all, block_w_all = testing.run_calc(
+        sys,
+        meas_ops,
+        ham_data,
+        trial_ops,
+        trial_data,
+        params,
+        block_fn,
+        prop_ops,
+    )
+    assert jnp.isclose(mean, e_ref)
+    assert jnp.isclose(err, err_ref)
+
+@pytest.fixture(scope="module")
+def mycc():
+    mol = gto.M(
+        atom="""
+        N 0.0000000 0.0000000 0.0000000
+        N 0.0000000 0.0000000 1.1000000
+        """,
+        basis="sto-6g",
+    )
+    mf = scf.RHF(mol)
+    mf.kernel()
+    mycc = cc.CCSD(mf)
+    mycc.kernel()
+    return mycc
+
+@pytest.fixture(scope="module")
+def params():
+    return QmcParams(
+        n_eql_blocks=10,
+        n_blocks=100,
+        seed=1234,
+        n_walkers=5,
+    )
 
 if __name__ == "__main__":
     pytest.main([__file__])

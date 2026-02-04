@@ -8,6 +8,7 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 import pytest
+from pyscf import gto, scf, cc
 
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.core.system import System
@@ -18,6 +19,9 @@ from ad_afqmc_prototype.meas.gcisd import energy_kernel_gw_gh
 from ad_afqmc_prototype.meas.gcisd import force_bias_kernel_gw_gh
 from ad_afqmc_prototype.trial.gcisd import GcisdTrial, make_gcisd_trial_ops
 from ad_afqmc_prototype import testing
+from ad_afqmc_prototype.prop.types import QmcParams
+from ad_afqmc_prototype.prop.blocks import block
+from ad_afqmc_prototype.prep.pyscf_interface import get_gcisd, get_trial_coeff
 
 def _make_gcisd_trial(
     key,
@@ -145,6 +149,86 @@ def test_auto_energy_matches_manual_gcisd(walker_kind, norb, nup, ndn, n_chol):
         e_m = e_manual(wi, ham, ctx_manual, trial)
         e_a = e_auto(wi, ham, ctx_auto, trial)
         assert jnp.allclose(e_a, e_m, rtol=5e-6, atol=5e-7), (e_a, e_m)
+
+def _prep(mycc, walker_kind):
+
+    mf = mycc._scf
+    (
+        sys,
+        ham_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = testing.make_common_pyscf(
+        mf,
+        make_gcisd_meas_ops,
+        make_gcisd_trial_ops,
+        walker_kind,
+        ham_basis="generalized",
+    )
+
+    ci1, ci2 = get_gcisd(mycc)
+    mo = get_trial_coeff(mf)
+    trial_data = GcisdTrial(mo_coeff=mo, c1=ci1, c2=ci2)
+
+    return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
+
+@pytest.mark.parametrize("walker_kind, e_ref, err_ref", [
+        ("generalized", -108.5303579509873, 0.0009986777045052101),
+    ]
+)
+def test_calc_ghf_hamiltonian(mycc, params, walker_kind, e_ref, err_ref):
+    (
+        sys,
+        ham_data,
+        trial_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = _prep(mycc, walker_kind)
+
+    block_fn = block
+
+    mean, err, block_e_all, block_w_all = testing.run_calc(
+        sys,
+        meas_ops,
+        ham_data,
+        trial_ops,
+        trial_data,
+        params,
+        block_fn,
+        prop_ops,
+    )
+    assert jnp.isclose(mean, e_ref)
+    assert jnp.isclose(err, err_ref)
+
+@pytest.fixture(scope="module")
+def mycc():
+    mol = gto.M(
+        atom="""
+        N 0.0000000 0.0000000 0.0000000
+        N 0.0000000 0.0000000 1.8000000
+        """,
+        basis="sto-6g",
+    )
+    mf = scf.GHF(mol)
+    mf.kernel()
+    mo1 = mf.stability()
+    dm1 = mf.make_rdm1(mo1, mf.mo_occ)
+    mf = mf.run(dm1)
+    mf.stability()
+    mycc = cc.GCCSD(mf)
+    mycc.kernel()
+    return mycc
+
+@pytest.fixture(scope="module")
+def params():
+    return QmcParams(
+        n_eql_blocks=10,
+        n_blocks=100,
+        seed=1234,
+        n_walkers=5,
+    )
 
 if __name__ == "__main__":
     pytest.main([__file__])
