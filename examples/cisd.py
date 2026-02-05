@@ -1,17 +1,23 @@
-from pyscf import gto, scf, cc
-from ad_afqmc_prototype.wrapper.cisd import Cisd
+from pyscf import cc, gto, scf
 
-r = 1.0
+from ad_afqmc_prototype.afqmc import AFQMC
+
 mol = gto.M(
-    atom=f"H 0 0 0; H 0 0 {1.0*r}; H 0 0 {2.0*r}; H 0 0 {3.0*r}",
-    basis="sto-6g",
+    atom=f"O 0 0 0; H 0 -0.757 0.587; H 0 0.757 0.587",
+    basis="6-31g",
     verbose=3,
 )
 mf = scf.RHF(mol)
 mf.kernel()
 
 mycc = cc.CCSD(mf)
+mycc.frozen = 1  # freeze O 1s core
 mycc.kernel()
+et = mycc.ccsd_t()  # for comparison
+print(f"CCSD(T) total energy: {mycc.e_tot + et}")
 
-afqmc = Cisd(mycc)
-mean, err, block_e_all, block_w_all = afqmc.kernel()
+afqmc = AFQMC(mycc)
+afqmc.n_walkers = 100  # number of walkers
+afqmc.n_eql_blocks = 10  # number of equilibration blocks
+afqmc.n_blocks = 100  # number of sampling blocks
+mean, err = afqmc.kernel()

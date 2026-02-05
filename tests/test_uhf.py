@@ -1,25 +1,30 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
+config.configure_once()
+
+from typing import cast
 
 import jax
-from jax import lax
 import jax.numpy as jnp
 import pytest
+from jax import lax
 from pyscf import gto, scf
 
-from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
-from ad_afqmc_prototype.meas.uhf import make_uhf_meas_ops, build_meas_ctx
-from ad_afqmc_prototype.meas.uhf import energy_kernel_rw_rh, energy_kernel_uw_rh, energy_kernel_gw_rh
-from ad_afqmc_prototype.meas.uhf import force_bias_kernel_rw_rh, force_bias_kernel_uw_rh, force_bias_kernel_gw_rh
-from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
 from ad_afqmc_prototype import testing
+from ad_afqmc_prototype.afqmc import AFQMC
+from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
+from ad_afqmc_prototype.meas.uhf import (
+    build_meas_ctx,
+    energy_kernel_gw_rh,
+    energy_kernel_rw_rh,
+    energy_kernel_uw_rh,
+    force_bias_kernel_gw_rh,
+    force_bias_kernel_rw_rh,
+    force_bias_kernel_uw_rh,
+    make_uhf_meas_ops,
+)
 from ad_afqmc_prototype.prop.types import QmcParams
-from ad_afqmc_prototype.prop.blocks import block
-from ad_afqmc_prototype.prep.pyscf_interface import get_trial_coeff
+from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
 
 
 def _make_uhf_trial(key, norb, nup, ndn, dtype=jnp.complex128) -> UhfTrial:
@@ -27,6 +32,7 @@ def _make_uhf_trial(key, norb, nup, ndn, dtype=jnp.complex128) -> UhfTrial:
     ca = testing.rand_orthonormal_cols(ka, norb, nup, dtype=dtype)
     cb = testing.rand_orthonormal_cols(kb, norb, ndn, dtype=dtype)
     return UhfTrial(mo_coeff_a=ca, mo_coeff_b=cb)
+
 
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
@@ -74,6 +80,7 @@ def test_auto_force_bias_matches_manual_uhf(walker_kind, norb, nup, ndn, n_chol)
 
         assert jnp.allclose(v_a, v_m, rtol=5e-6, atol=5e-7), (v_a, v_m)
 
+
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
     [
@@ -120,6 +127,7 @@ def test_auto_energy_matches_manual_uhf(walker_kind, norb, nup, ndn, n_chol):
 
         assert jnp.allclose(ea, em, rtol=5e-6, atol=5e-7), (ea, em)
 
+
 def test_force_bias_equal_when_wu_eq_wr():
     norb = 6
     nup, ndn = 2, 2
@@ -152,10 +160,12 @@ def test_force_bias_equal_when_wu_eq_wr():
 
     for i in range(4):
         wi = testing.make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = cast(jax.Array, wi)
         fbr = force_bias_kernel_rw_rh(wi, ham, ctx, trial)
         fbu = force_bias_kernel_uw_rh((wi, wi), ham, ctx, trial)
 
         assert jnp.allclose(fbr, fbu, atol=1e-12), (fbr, fbu)
+
 
 def test_force_bias_equal_when_wg_eq_wu():
     norb = 6
@@ -189,21 +199,23 @@ def test_force_bias_equal_when_wg_eq_wu():
 
     for i in range(4):
         wi = testing.make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = cast(tuple, wi)
         fbu = force_bias_kernel_uw_rh(wi, ham, ctx, trial)
         wa, wb = wi
-        wi = jnp.zeros((2*norb, nup+ndn), dtype=wa.dtype)
-        wi = lax.dynamic_update_slice(wi, wa, (0,0))
-        wi = lax.dynamic_update_slice(wi, wb, (norb,nup))
+        wi = jnp.zeros((2 * norb, nup + ndn), dtype=wa.dtype)
+        wi = lax.dynamic_update_slice(wi, wa, (0, 0))
+        wi = lax.dynamic_update_slice(wi, wb, (norb, nup))
         fbg = force_bias_kernel_gw_rh(wi, ham, ctx, trial)
 
         assert jnp.allclose(fbu, fbg, atol=1e-12), (fbu, fbg)
+
 
 def test_energy_equal_when_wu_eq_wr():
     norb = 6
     nup, ndn = 2, 2
     n_chol = 8
     walker_kind = "restricted"
-    
+
     key = jax.random.PRNGKey(1)
     key, k_w = jax.random.split(key)
 
@@ -230,17 +242,19 @@ def test_energy_equal_when_wu_eq_wr():
 
     for i in range(4):
         wi = testing.make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = cast(jax.Array, wi)
         er = energy_kernel_rw_rh(wi, ham, ctx, trial)
         eu = energy_kernel_uw_rh((wi, wi), ham, ctx, trial)
 
         assert jnp.allclose(er, eu, atol=1e-12), (er, eu)
+
 
 def test_energy_equal_when_wg_eq_wu():
     norb = 6
     nup, ndn = 2, 1
     n_chol = 8
     walker_kind = "unrestricted"
-    
+
     key = jax.random.PRNGKey(1)
     key, k_w = jax.random.split(key)
 
@@ -267,35 +281,16 @@ def test_energy_equal_when_wg_eq_wu():
 
     for i in range(4):
         wi = testing.make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = cast(tuple, wi)
         eu = energy_kernel_uw_rh(wi, ham, ctx, trial)
         wa, wb = wi
-        wi = jnp.zeros((2*norb, nup+ndn), dtype=wa.dtype)
-        wi = lax.dynamic_update_slice(wi, wa, (0,0))
-        wi = lax.dynamic_update_slice(wi, wb, (norb,nup))
+        wi = jnp.zeros((2 * norb, nup + ndn), dtype=wa.dtype)
+        wi = lax.dynamic_update_slice(wi, wa, (0, 0))
+        wi = lax.dynamic_update_slice(wi, wb, (norb, nup))
         eg = energy_kernel_gw_rh(wi, ham, ctx, trial)
 
         assert jnp.allclose(eu, eg, atol=1e-12), (eu, eg)
 
-def _prep(mf, walker_kind):
-    (   
-        sys,
-        ham_data, 
-        trial_ops,
-        prop_ops,
-        meas_ops,
-    ) = testing.make_common_pyscf(
-        mf,
-        make_uhf_meas_ops,
-        make_uhf_trial_ops,
-        walker_kind,
-    )
-
-    moa, mob = get_trial_coeff(mf)
-    moa = moa[:, :sys.nup]
-    mob = mob[:, :sys.ndn]
-    trial_data = UhfTrial(mo_coeff_a=moa, mo_coeff_b=mob)
-
-    return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
 
 def mf():
     mol = gto.M(
@@ -309,6 +304,7 @@ def mf():
     mf = scf.UHF(mol).newton()
     mf.kernel()
     return mf
+
 
 def mf2():
     mol = gto.M(
@@ -324,39 +320,29 @@ def mf2():
     mf.kernel()
     return mf
 
-mf = mf()
-mf2 = mf2()
 
-@pytest.mark.parametrize("mf, walker_kind, e_ref, err_ref", [
-        (mf , "restricted"  , -75.75594187783527, 0.01213383697785241),
+mf = mf()  # type: ignore
+mf2 = mf2()  # type: ignore
+
+
+@pytest.mark.parametrize(
+    "mf, walker_kind, e_ref, err_ref",
+    [
+        (mf, "restricted", -75.75594187783527, 0.01213383697785241),
         (mf2, "unrestricted", -55.43066756011652, 0.00761980459817991),
-        (mf2, "generalized" , -55.43066756011653, 0.007619804598170696),
-    ]
+        (mf2, "generalized", -55.43066756011653, 0.007619804598170696),
+    ],
 )
 def test_calc_rhf_hamiltonian(mf, params, walker_kind, e_ref, err_ref):
-    (
-        sys,
-        ham_data,
-        trial_data,
-        trial_ops,
-        prop_ops,
-        meas_ops,
-    ) = _prep(mf, walker_kind)
-
-    block_fn = block
-
-    mean, err, block_e_all, block_w_all = testing.run_calc(
-        sys,
-        meas_ops,
-        ham_data,
-        trial_ops,
-        trial_data,
-        params,
-        block_fn,
-        prop_ops,
-    )
+    myafqmc = AFQMC(mf)
+    myafqmc.params = params
+    myafqmc.walker_kind = walker_kind
+    myafqmc.mixed_precision = False
+    myafqmc.chol_cut = 1e-6
+    mean, err = myafqmc.kernel()
     assert jnp.isclose(mean, e_ref), (mean, e_ref, mean - e_ref)
     assert jnp.isclose(err, err_ref), (err, err_ref, err - err_ref)
+
 
 @pytest.fixture(scope="module")
 def params():
@@ -366,6 +352,7 @@ def params():
         seed=1234,
         n_walkers=5,
     )
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

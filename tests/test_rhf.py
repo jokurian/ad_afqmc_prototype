@@ -1,22 +1,14 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
+config.configure_once()
 
 import jax.numpy as jnp
 import pytest
 from pyscf import gto, scf
 
 from ad_afqmc_prototype import driver
-from ad_afqmc_prototype.core.ops import MeasOps, k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas import rhf, uhf
-from ad_afqmc_prototype.prep.pyscf_interface import get_integrals, get_trial_coeff
-from ad_afqmc_prototype.prop.afqmc import make_prop_ops
-from ad_afqmc_prototype.prop.blocks import block
+from ad_afqmc_prototype.afqmc import AFQMC
 from ad_afqmc_prototype.prop.types import QmcParams
-from ad_afqmc_prototype.trial.rhf import RhfTrial, make_rhf_trial_ops
-from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
 
 
 def run_calc(
@@ -35,55 +27,22 @@ def run_calc(
     return mean, err, block_e_all, block_w_all
 
 
-def test_rhf_walker_rhf_hamiltonian(mf, params):
-    meas_ops = MeasOps(
-        overlap=rhf.overlap_r,
-        build_meas_ctx=rhf.build_meas_ctx,
-        kernels={
-            k_force_bias: rhf.force_bias_kernel_rw_rh,
-            k_energy: rhf.energy_kernel_rw_rh,
-        },
-    )
-    h0, h1, chol = get_integrals(mf)
-    sys = System(norb=mf.mol.nao, nelec=mf.mol.nelec, walker_kind="restricted")
-    ham_data = HamChol(h0, h1, chol)
-    mo = jnp.array(get_trial_coeff(mf))
-    mo = mo[:, : sys.nup]
-    trial_data = RhfTrial(mo)
-    trial_ops = make_rhf_trial_ops(sys=sys)
-    prop_ops = make_prop_ops(ham_data.basis, sys.walker_kind)
-    block_fn = block
-    mean, err, block_e_all, block_w_all = run_calc(
-        sys, meas_ops, ham_data, trial_ops, trial_data, params, block_fn, prop_ops
-    )
-    assert jnp.isclose(mean, -108.69082190102914)
-    assert jnp.isclose(err, 0.009301054598808593)
-
-
-def test_uhf_walker_rhf_hamiltonian(mf, params):
-    meas_ops = MeasOps(
-        overlap=rhf.overlap_u,
-        build_meas_ctx=rhf.build_meas_ctx,
-        kernels={
-            k_force_bias: rhf.force_bias_kernel_uw_rh,
-            k_energy: rhf.energy_kernel_uw_rh,
-        },
-    )
-    h0, h1, chol = get_integrals(mf)
-    sys = System(norb=mf.mol.nao, nelec=mf.mol.nelec, walker_kind="unrestricted")
-    ham_data = HamChol(h0, h1, chol)
-    mo = jnp.array(get_trial_coeff(mf))
-    mo_alpha = mo[:, : sys.nelec[0]]
-    mo_beta = mo[:, : sys.nelec[1]]
-    trial_data = RhfTrial(mo_alpha)
-    trial_ops = make_rhf_trial_ops(sys=sys)
-    prop_ops = make_prop_ops(ham_data.basis, sys.walker_kind)
-    block_fn = block
-    mean, err, block_e_all, block_w_all = run_calc(
-        sys, meas_ops, ham_data, trial_ops, trial_data, params, block_fn, prop_ops
-    )
-    assert jnp.isclose(mean, -108.69082190102924)
-    assert jnp.isclose(err, 0.009301054598809451)
+@pytest.mark.parametrize(
+    "walker_kind, e_ref, err_ref",
+    [
+        ("restricted", -75.75594174131398, 0.01213379336719581),
+        ("unrestricted", -75.75594174131398, 0.01213379336719581),
+    ],
+)
+def test_calc_rhf_hamiltonian(mf, params, walker_kind, e_ref, err_ref):
+    myafqmc = AFQMC(mf)
+    myafqmc.params = params
+    myafqmc.walker_kind = walker_kind
+    myafqmc.mixed_precision = False
+    myafqmc.chol_cut = 1e-6
+    mean, err = myafqmc.kernel()
+    assert jnp.isclose(mean, e_ref), (mean, e_ref, mean - e_ref)
+    assert jnp.isclose(err, err_ref), (err, err_ref, err - err_ref)
 
 
 @pytest.fixture(scope="module")

@@ -88,10 +88,6 @@ def run_qmc_energy(
     Returns:
       (mean_energy, stderr, block_energies, block_weights)
     """
-    print("Starting QMC driver...")
-    print(f"Parameters:")
-    pprint(params)
-    print("")
     # build ctx
     prop_ctx = prop_ops.build_prop_ctx(ham_data, trial_ops.get_rdm1(trial_data), params)
     if meas_ctx is None:

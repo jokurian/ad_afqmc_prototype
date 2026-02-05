@@ -1,13 +1,13 @@
 import jax
 import jax.numpy as jnp
 
+from ad_afqmc_prototype import driver
 from ad_afqmc_prototype.core.ops import TrialOps
 from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.chol import HamBasis, HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.prop.afqmc import make_prop_ops
-from ad_afqmc_prototype import driver
-from ad_afqmc_prototype.prep import pyscf_interface
+from ad_afqmc_prototype.staging import _stage_ham_input
 
 
 def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
@@ -164,15 +164,9 @@ def make_common_manual_only(
 
     return sys, ham, trial, ctx
 
+
 def run_calc(
-    sys,
-    meas_ops,
-    ham_data,
-    trial_ops,
-    trial_data,
-    params,
-    block_fn,
-    prop_ops
+    sys, meas_ops, ham_data, trial_ops, trial_data, params, block_fn, prop_ops
 ):
     mean, err, block_e_all, block_w_all = driver.run_qmc_energy(
         sys=sys,
@@ -186,14 +180,21 @@ def run_calc(
     )
     return mean, err, block_e_all, block_w_all
 
+
 def make_common_pyscf(
     mf,
     make_meas_ops_fn,
     make_trial_ops_fn,
     walker_kind,
-    ham_basis="restricted",
+    ham_basis: HamBasis = "restricted",
 ):
-    h0, h1, chol = pyscf_interface.get_integrals(mf)
+    # h0, h1, chol = pyscf_interface.get_integrals(mf)
+    ham_input = _stage_ham_input(
+        mf, source_kind="scf", norb_frozen=0, chol_cut=1e-6, verbose=False
+    )
+    h0 = jnp.asarray(ham_input.h0)
+    h1 = jnp.asarray(ham_input.h1)
+    chol = jnp.asarray(ham_input.chol)
     sys = System(
         norb=mf.mol.nao,
         nelec=mf.mol.nelec,

@@ -1,27 +1,25 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
+config.configure_once()
 
 import jax
 import jax.numpy as jnp
 import pytest
 from pyscf import gto, scf
 
-from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
-from ad_afqmc_prototype.meas.ghf import make_ghf_meas_ops_chol
-from ad_afqmc_prototype.trial.ghf import GhfTrial, make_ghf_trial_ops
-from ad_afqmc_prototype.prop.types import QmcParams
-from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype import testing
-from ad_afqmc_prototype.prep.pyscf_interface import get_trial_coeff
+from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
+from ad_afqmc_prototype.meas.ghf import make_ghf_meas_ops_chol
+from ad_afqmc_prototype.prop.blocks import block
+from ad_afqmc_prototype.prop.types import QmcParams
+from ad_afqmc_prototype.trial.ghf import GhfTrial, make_ghf_trial_ops
+
 
 def _make_ghf_trial(key, norb, nup, ndn, dtype=jnp.complex128) -> GhfTrial:
     ne = nup + ndn
     mo = testing.rand_orthonormal_cols(key, 2 * norb, ne, dtype=dtype)
     return GhfTrial(mo_coeff=mo)
+
 
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
@@ -138,12 +136,18 @@ def _prep(mf, walker_kind):
         walker_kind,
         ham_basis="generalized",
     )
-    
-    mo = get_trial_coeff(mf)
-    mo = mo[:, :sys.nup+sys.ndn]
+    import numpy as np
+
+    c = mf.mo_coeff
+    overlap = mf.get_ovlp(mf.mol)
+    q, r = np.linalg.qr(c.T @ overlap @ c)
+    sgn = np.sign(r.diagonal())
+    mo = jnp.einsum("ij,j->ij", q, sgn)
+    mo = mo[:, : sys.nup + sys.ndn]
     trial_data = GhfTrial(mo)
 
     return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
+
 
 def mf():
     mol = gto.M(
@@ -155,16 +159,19 @@ def mf():
         basis="sto-6g",
         spin=1,
     )
-    mf = scf.GHF(mol).newton().x2c()
+    mf = scf.GHF(mol).newton().x2c()  # type: ignore
     mf.kernel()
     return mf
 
+
 mf = mf()
 
-@pytest.mark.parametrize("mf, walker_kind, e_ref, err_ref",
+
+@pytest.mark.parametrize(
+    "mf, walker_kind, e_ref, err_ref",
     [
         (mf, "generalized", -55.45498682945663, 0.007636218322027936),
-    ]
+    ],
 )
 def test_calc_ghf_hamiltonian(mf, params, walker_kind, e_ref, err_ref):
     (
@@ -190,6 +197,7 @@ def test_calc_ghf_hamiltonian(mf, params, walker_kind, e_ref, err_ref):
     )
     assert jnp.isclose(mean, e_ref), (mean, e_ref, mean - e_ref)
     assert jnp.isclose(err, err_ref), (err, err_ref, err - err_ref)
+
 
 @pytest.fixture(scope="module")
 def params():

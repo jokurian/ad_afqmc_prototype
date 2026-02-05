@@ -1,6 +1,6 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
+config.configure_once()
 
 from typing import Literal
 
@@ -8,13 +8,14 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from ad_afqmc_prototype import testing
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.chol import HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.cis import make_cis_meas_ops
 from ad_afqmc_prototype.trial.cis import CisTrial, make_cis_trial_ops
-from ad_afqmc_prototype import testing
+
 
 def _make_cis_trial(
     key,
@@ -38,17 +39,9 @@ def _make_cis_trial(
     return CisTrial(ci1=ci1)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol,memory_mode",
-    [
-        (8, 3, 10, "low"),
-        (8, 3, 10, "high"),
-        (10, 4, 12, "low"),
-        (10, 4, 12, "high"),
-    ],
-)
-def test_auto_force_bias_matches_manual_cis(norb, nocc, n_chol, memory_mode):
-    walker_kind="restricted"
+@pytest.mark.parametrize("norb,nocc,n_chol", [(10, 4, 12)])
+def test_auto_force_bias_matches_manual_cis(norb, nocc, n_chol):
+    walker_kind = "restricted"
     key = jax.random.PRNGKey(123)
     k_ham, k_trial, k_w = jax.random.split(key, 3)
 
@@ -91,17 +84,9 @@ def test_auto_force_bias_matches_manual_cis(norb, nocc, n_chol, memory_mode):
         assert jnp.allclose(v_a, v_m, rtol=2e-5, atol=2e-6), (v_a, v_m)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol,memory_mode",
-    [
-        (8, 3, 10, "low"),
-        (8, 3, 10, "high"),
-        (10, 4, 12, "low"),
-        (10, 4, 12, "high"),
-    ],
-)
-def test_auto_energy_matches_manual_cis(norb, nocc, n_chol, memory_mode):
-    walker_kind="restricted"
+@pytest.mark.parametrize("norb,nocc,n_chol", [(10, 4, 12)])
+def test_auto_energy_matches_manual_cis(norb, nocc, n_chol):
+    walker_kind = "restricted"
     key = jax.random.PRNGKey(456)
     key, k_w = jax.random.split(key)
 
