@@ -3,11 +3,12 @@ import jax.numpy as jnp
 
 from ad_afqmc_prototype.core.ops import TrialOps
 from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
+from ad_afqmc_prototype.ham.chol import HamBasis, HamChol
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.prop.afqmc import make_prop_ops
 from ad_afqmc_prototype import driver
 from ad_afqmc_prototype.prep import pyscf_interface
+
 
 def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
     """
@@ -20,16 +21,17 @@ def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
             k1, (nrow, ncol), dtype=jnp.float64
         ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
     elif dtype in (jnp.float64, jnp.float32):
-        a = jax.random.normal(
-            k1, (nrow, ncol), dtype=jnp.float64
-        )
+        a = jax.random.normal(k1, (nrow, ncol), dtype=jnp.float64)
     else:
         raise TypeError(f"Received unsupported type {dtype}.")
 
     q, _ = jnp.linalg.qr(a, mode="reduced")
     return q.astype(dtype)
 
-def make_random_ham_chol(key, norb, n_chol, basis="restricted", dtype=jnp.float64) -> HamChol:
+
+def make_random_ham_chol(
+    key, norb, n_chol, basis: HamBasis = "restricted", dtype=jnp.float64
+) -> HamChol:
     """
     Build a small HamChol with:
       - symmetric real h1
@@ -38,19 +40,20 @@ def make_random_ham_chol(key, norb, n_chol, basis="restricted", dtype=jnp.float6
     assert basis in ["restricted", "generalized"]
 
     if basis == "generalized":
-        norb = 2*norb
+        norb = 2 * norb
 
     k1, k2, k3 = jax.random.split(key, 3)
-    
+
     a = jax.random.normal(k1, (norb, norb), dtype=dtype)
     h1 = 0.5 * (a + a.T)
 
     b = jax.random.normal(k2, (n_chol, norb, norb), dtype=dtype)
     chol = 0.5 * (b + jnp.swapaxes(b, 1, 2))
-    
+
     h0 = jax.random.normal(k3, (), dtype=dtype)
 
     return HamChol(basis=basis, h0=h0, h1=h1, chol=chol)
+
 
 def make_walkers(key, sys: System, dtype=jnp.complex128):
     """
@@ -73,10 +76,11 @@ def make_walkers(key, sys: System, dtype=jnp.complex128):
         return (wu, wd)
 
     if wk == "generalized":
-        w = rand_orthonormal_cols(key, 2 * norb, na+nb, dtype=dtype)
+        w = rand_orthonormal_cols(key, 2 * norb, na + nb, dtype=dtype)
         return w
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
 
 def make_restricted_walker_near_ref(
     key, norb: int, nocc: int, *, mix: float = 0.2, dtype=jnp.complex128
@@ -97,6 +101,7 @@ def make_restricted_walker_near_ref(
     q, _ = jnp.linalg.qr(w, mode="reduced")
     return q.astype(dtype)
 
+
 def make_dummy_trial_ops():
     def get_rdm1(trial_data):
         return trial_data["rdm1"]
@@ -106,10 +111,11 @@ def make_dummy_trial_ops():
 
     return TrialOps(overlap=overlap, get_rdm1=get_rdm1)
 
+
 def make_common_auto(
     key,
     walker_kind,
-    norb:int,
+    norb: int,
     nelec: tuple[int, int],
     n_chol: int,
     *,
@@ -117,18 +123,13 @@ def make_common_auto(
     make_trial_fn_kwargs=(),
     make_trial_ops_fn,
     make_meas_ops_fn,
-    ham_basis="restricted",
-    ):
+    ham_basis: HamBasis = "restricted",
+):
     sys = System(norb=norb, nelec=nelec, walker_kind=walker_kind)
 
     k_ham, k_trial = jax.random.split(key, 2)
 
-    ham = make_random_ham_chol(
-        k_ham,
-        norb=norb,
-        n_chol=n_chol,
-        basis=ham_basis
-    )
+    ham = make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol, basis=ham_basis)
     trial = make_trial_fn(k_trial, **make_trial_fn_kwargs)
 
     t_ops = make_trial_ops_fn(sys)
@@ -140,10 +141,11 @@ def make_common_auto(
 
     return sys, ham, trial, meas_manual, ctx_manual, meas_auto, ctx_auto
 
+
 def make_common_manual_only(
     key,
     walker_kind,
-    norb:int,
+    norb: int,
     nelec: tuple[int, int],
     n_chol: int,
     *,
@@ -151,7 +153,7 @@ def make_common_manual_only(
     make_trial_fn_kwargs=(),
     make_trial_ops_fn,
     build_meas_ctx_fn,
-    ):
+):
     sys = System(norb=norb, nelec=nelec, walker_kind=walker_kind)
 
     k_ham, k_trial = jax.random.split(key, 2)
