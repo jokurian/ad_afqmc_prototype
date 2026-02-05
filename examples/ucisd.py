@@ -1,7 +1,9 @@
-from pyscf import gto, scf, cc
-from ad_afqmc_prototype.wrapper.ucisd import Ucisd
+from pyscf import cc, gto, scf
 
-mol = gto.M(atom="""
+from ad_afqmc_prototype.afqmc import AFQMC
+
+mol = gto.M(
+    atom="""
     N 2.5 0.0 0.0
     N 0.0 0.0 0.0
     """,
@@ -19,5 +21,5 @@ mf.stability()
 mycc = cc.UCCSD(mf)
 mycc.kernel()
 
-afqmc = Ucisd(mycc)
-mean, err, block_e_all, block_w_all = afqmc.kernel()
+afqmc = AFQMC(mycc)
+mean, err = afqmc.kernel()
