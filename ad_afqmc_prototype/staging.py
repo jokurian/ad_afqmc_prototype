@@ -352,10 +352,6 @@ class StagedMf:
     def norb_frozen(self) -> Array:
         return self.norb_frozen
 
-    @property
-    def _delegate_mf(self) -> Set[str]:
-        return self._delegate_mf_set
- 
     def __getattr__(self, name):
         if name in StagedMf._delegate:
             return getattr(self.mf, name)
