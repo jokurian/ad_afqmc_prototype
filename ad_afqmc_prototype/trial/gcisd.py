@@ -89,3 +89,9 @@ def make_gcisd_trial_ops(sys: System) -> TrialOps:
         return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
+def make_gcisd_trial_data(data: dict, sys: System) -> GcisdTrial:
+    ci1 = jnp.asarray(data["ci1"])
+    ci2 = jnp.asarray(data["ci2"])
+    mo = jnp.asarray(data["mo_coeff"])
+    return GcisdTrial(data["mo_coeff"], ci1, ci2)

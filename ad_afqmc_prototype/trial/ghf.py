@@ -246,3 +246,8 @@ def make_ghf_trial_ops(sys: System) -> TrialOps:
         )
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
+def make_ghf_trial_data(mo: dict, sys: System) -> GhfTrial:
+    mo = jnp.asarray(data["mo"])
+    m_occ = mo[:, :sys.ne]
+    trial_data = GhfTrial(mo_occ)

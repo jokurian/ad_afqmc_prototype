@@ -207,3 +207,14 @@ def make_ucisd_trial_ops(sys: System) -> TrialOps:
         return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
+def make_ucisd_trial_data(data: dict, sys: System) -> UcisdTrial:
+    return UcisdTrial(
+        mo_coeff_a=jnp.asarray(data["mo_coeff_a"]),
+        mo_coeff_b=jnp.asarray(data["mo_coeff_b"]),
+        c1a=jnp.asarray(data["ci1a"]),
+        c1b=jnp.asarray(data["ci1b"]),
+        c2aa=jnp.asarray(data["ci2aa"]),
+        c2ab=jnp.asarray(data["ci2ab"]),
+        c2bb=jnp.asarray(data["ci2bb"]),
+    )

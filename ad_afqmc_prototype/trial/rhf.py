@@ -79,3 +79,8 @@ def make_rhf_trial_ops(sys: System) -> TrialOps:
         return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+
+def make_rhf_trial_data(data: dict, sys: System) -> RhfTrial:
+    mo = jnp.asarray(data["mo"])
+    mo_occ = mo[:, : sys.nup]
+    return RhfTrial(mo_occ)
