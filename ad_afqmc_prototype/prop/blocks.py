@@ -35,6 +35,7 @@ class BlockFn(Protocol):
 class BlockObs(NamedTuple):
     scalars: dict[str, jax.Array]
 
+
 def proc_e(samples: Array, state: PropState, params: QmcParams) -> BlockObs:
     e_samples = jnp.real(samples)
 
@@ -51,12 +52,24 @@ def proc_e(samples: Array, state: PropState, params: QmcParams) -> BlockObs:
     obs = BlockObs(scalars={"energy": e_block, "weight": w_sum})
     return obs
 
-def proc_samples(kernel: str, samples: Array, state: PropState, params: QmcParams) -> BlockObs:
+
+def proc_single(kernel: str, samples: Array, state: PropState, params: QmcParams) -> BlockObs:
     match kernel:
         case "energy":
             obs = proc_e(samples, state, params)
         case _:
             raise ValueError(f"Unknown kernel '{kernel}'.")
+
+    return obs
+
+
+def proc_samples(k_names: [str], samples: Array, state: PropState, params: QmcParams) -> BlockObs:
+    # Process the samples of each kernel and gather the results
+    _proc_fn = lambda k, s: proc_single(k, s, state, params)
+    lb_obs = list(map(_proc_fn, k_names, samples))
+    obs = BlockObs(scalars = {
+        k: v for b_obs in lb_obs for k, v in b_obs.scalars.items()
+    })
 
     return obs
 
@@ -74,6 +87,7 @@ def block(
     prop_ctx: Any,
     sr_fn: Callable = wk.stochastic_reconfiguration,
     k_names: [str] = [k_energy],
+    proc_fn: Callable = proc_samples,
 ) -> tuple[PropState, BlockObs]:
     """
     propagation + measurement
@@ -109,12 +123,7 @@ def block(
     )(state.walkers, ham_data, meas_ctx, trial_data)
     samples = tuple(map(eval_kernel, kernels))
 
-    # Process the samples of each kernel and gather the results
-    _proc_fn = lambda k, s: proc_samples(k, s, state, params)
-    lb_obs = list(map(_proc_fn, k_names, samples))
-    obs = BlockObs(scalars = {
-        k: v for b_obs in lb_obs for k, v in b_obs.scalars.items()
-    })
+    obs = proc_fn(k_names, samples, state, params)
 
     e_block = obs.scalars["energy"]
 
