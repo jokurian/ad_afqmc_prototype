@@ -210,28 +210,34 @@ def make_ghf_meas_ops_chol(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
 
     if wk == "restricted":
-        return MeasOps(
-            overlap=overlap_r,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
-        )
+        overlap_fn = overlap_r
+        build_meas_ctx_fn = build_meas_ctx_chol
+        kernels = {
+            k_force_bias: force_bias_kernel_rw_rh,
+            k_energy: energy_kernel_rw_rh,
+        }
+    elif wk == "unrestricted":
+        overlap_fn = overlap_u
+        build_meas_ctx_fn = build_meas_ctx_chol
+        kernels = {
+            k_force_bias: force_bias_kernel_uw_rh,
+            k_energy: energy_kernel_uw_rh,
+        }
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        build_meas_ctx_fn = build_meas_ctx_chol
+        kernels = {
+            k_force_bias: force_bias_kernel_gw_rh,
+            k_energy: energy_kernel_gw_rh,
+        }
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        return MeasOps(
-            overlap=overlap_u,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_uw_rh, k_energy: energy_kernel_uw_rh},
-        )
-
-    if wk == "generalized":
-        return MeasOps(
-            overlap=overlap_g,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_gw_rh, k_energy: energy_kernel_gw_rh},
-        )
-
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
-
+    return MeasOps(
+        overlap=overlap_fn,
+        build_meas_ctx=build_meas_ctx_fn,
+        kernels=kernels,
+    )
 
 # ---------------------
 # hubbard
@@ -282,17 +288,20 @@ def make_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
 
     if wk == "unrestricted":
-        return MeasOps(
-            overlap=overlap_u,
-            kernels={k_energy: energy_kernel_hubbard_u},
+        overlap_fn = overlap_u
+        kernels = {
+            k_energy: energy_kernel_hubbard_u,
+        }
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        kernels = {
+            k_energy: energy_kernel_hubbard_g,
+        }
+    else:
+        raise ValueError(
+            f"hubbard GHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
         )
-
-    if wk == "generalized":
-        return MeasOps(
-            overlap=overlap_g,
-            kernels={k_energy: energy_kernel_hubbard_g},
-        )
-
-    raise ValueError(
-        f"hubbard GHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+    return MeasOps(
+        overlap=overlap_fn,
+        kernels=kernels,
     )

@@ -79,16 +79,19 @@ def overlap_g(walker: jax.Array, trial_data: GcisdTrial) -> jax.Array:
 def make_gcisd_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
-    if wk == "restricted":
-        raise NotImplementedError
+    print(wk)
+    if wk == "restricted" or wk == "unrestricted":
+        raise NotImplementedError("GCISD trial is only implemented for generalized walkers.")
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        get_rdm1_fn = get_rdm1
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        raise NotImplementedError
-
-    if wk == "generalized":
-        return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
-
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+    return TrialOps(
+        overlap=overlap_fn,
+        get_rdm1=get_rdm1_fn,
+    )
 
 def make_gcisd_trial_data(data: dict, sys: System) -> GcisdTrial:
     ci1 = jnp.asarray(data["ci1"])
