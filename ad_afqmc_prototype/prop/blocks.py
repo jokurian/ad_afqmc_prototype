@@ -35,6 +35,30 @@ class BlockFn(Protocol):
 class BlockObs(NamedTuple):
     scalars: dict[str, jax.Array]
 
+def proc_e(samples: Array, state: PropState, params: QmcParams) -> BlockObs:
+    e_samples = jnp.real(samples)
+
+    thresh = jnp.sqrt(2.0 / jnp.asarray(params.dt))
+    e_ref = state.e_estimate
+    e_samples = jnp.where(jnp.abs(e_samples - e_ref) > thresh, e_ref, e_samples)
+
+    weights = state.weights
+    w_sum = jnp.sum(weights)
+    w_sum_safe = jnp.where(w_sum == 0, 1.0, w_sum)
+    e_block = jnp.sum(weights * e_samples) / w_sum_safe
+    e_block = jnp.where(w_sum == 0, e_ref, e_block)
+
+    obs = BlockObs(scalars={"energy": e_block, "weight": w_sum})
+    return obs
+
+def proc_samples(kernel: str, samples: Array, state: PropState, params: QmcParams) -> BlockObs:
+    match kernel:
+        case "energy":
+            obs = proc_e(samples, state, params)
+        case _:
+            raise ValueError(f"Unknown kernel '{kernel}'.")
+
+    return obs
 
 def block(
     state: PropState,
@@ -49,6 +73,7 @@ def block(
     prop_ops: PropOps,
     prop_ctx: Any,
     sr_fn: Callable = wk.stochastic_reconfiguration,
+    k_names: [str] = [k_energy],
 ) -> tuple[PropState, BlockObs]:
     """
     propagation + measurement
@@ -76,21 +101,22 @@ def block(
     )(walkers_new, trial_data)
     state = state._replace(walkers=walkers_new, overlaps=overlaps_new)
 
-    e_kernel = meas_ops.require_kernel(k_energy)
-    e_samples = wk.vmap_chunked(
-        e_kernel, n_chunks=params.n_chunks, in_axes=(0, None, None, None)
+    kernels = tuple(meas_ops.require_kernel(k) for k in k_names)
+
+    # Sequential eval of each kernel    
+    eval_kernel = lambda kernel: wk.vmap_chunked(
+        kernel, n_chunks=params.n_chunks, in_axes=(0, None, None, None)
     )(state.walkers, ham_data, meas_ctx, trial_data)
-    e_samples = jnp.real(e_samples)
+    samples = tuple(map(eval_kernel, kernels))
 
-    thresh = jnp.sqrt(2.0 / jnp.asarray(params.dt))
-    e_ref = state.e_estimate
-    e_samples = jnp.where(jnp.abs(e_samples - e_ref) > thresh, e_ref, e_samples)
+    # Process the samples of each kernel and gather the results
+    _proc_fn = lambda k, s: proc_samples(k, s, state, params)
+    lb_obs = list(map(_proc_fn, k_names, samples))
+    obs = BlockObs(scalars = {
+        k: v for b_obs in lb_obs for k, v in b_obs.scalars.items()
+    })
 
-    weights = state.weights
-    w_sum = jnp.sum(weights)
-    w_sum_safe = jnp.where(w_sum == 0, 1.0, w_sum)
-    e_block = jnp.sum(weights * e_samples) / w_sum_safe
-    e_block = jnp.where(w_sum == 0, e_ref, e_block)
+    e_block = obs.scalars["energy"]
 
     alpha = jnp.asarray(params.shift_ema, dtype=jnp.result_type(e_block))
     state = state._replace(
@@ -110,7 +136,7 @@ def block(
         rng_key=key,
     )
 
-    obs = BlockObs(scalars={"energy": e_block, "weight": w_sum})
+    #obs = BlockObs(scalars={"energy": e_block, "weight": w_sum})
     return state, obs
 
 
