@@ -1,23 +1,20 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
+config.configure_once()
 
-from typing import Literal
 
 import jax
-from jax import lax
 import jax.numpy as jnp
 import pytest
+from pyscf import cc, gto, scf
 
-from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
-from ad_afqmc_prototype.meas.gcisd import make_gcisd_meas_ops, build_meas_ctx
-from ad_afqmc_prototype.meas.gcisd import energy_kernel_g
-from ad_afqmc_prototype.meas.gcisd import force_bias_kernel_g
-from ad_afqmc_prototype.trial.gcisd import GcisdTrial, make_gcisd_trial_ops
 from ad_afqmc_prototype import testing
+from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
+from ad_afqmc_prototype.meas.gcisd import make_gcisd_meas_ops
+from ad_afqmc_prototype.prop.blocks import block
+from ad_afqmc_prototype.prop.types import QmcParams
+from ad_afqmc_prototype.trial.gcisd import GcisdTrial, make_gcisd_trial_ops
+
 
 def _make_gcisd_trial(
     key,
@@ -36,7 +33,7 @@ def _make_gcisd_trial(
     We keep coefficients modest in magnitude to reduce catastrophic cancellation
     when comparing against overlap-based finite differences.
     """
-    norb = 2*norb
+    norb = 2 * norb
     nocc = nup + ndn
     nvir = norb - nocc
     k1, k2 = jax.random.split(key)
@@ -45,7 +42,12 @@ def _make_gcisd_trial(
     c2 = scale_ci2 * jax.random.normal(k2, (nocc, nvir, nocc, nvir), dtype=dtype)
 
     # Antisymmetry
-    c2 = 0.25 * (c2 - jnp.einsum("iajb->jaib", c2) - jnp.einsum("iajb->ibja", c2) + jnp.einsum("iajb->jbia", c2))
+    c2 = 0.25 * (
+        c2
+        - jnp.einsum("iajb->jaib", c2)
+        - jnp.einsum("iajb->ibja", c2)
+        + jnp.einsum("iajb->jbia", c2)
+    )
 
     c = jnp.eye(norb, norb)
 
@@ -54,6 +56,7 @@ def _make_gcisd_trial(
         c1=c1,
         c2=c2,
     )
+
 
 @pytest.mark.parametrize(
     "walker_kind,norb,nup,ndn,n_chol",
@@ -145,6 +148,108 @@ def test_auto_energy_matches_manual_gcisd(walker_kind, norb, nup, ndn, n_chol):
         e_m = e_manual(wi, ham, ctx_manual, trial)
         e_a = e_auto(wi, ham, ctx_auto, trial)
         assert jnp.allclose(e_a, e_m, rtol=5e-6, atol=5e-7), (e_a, e_m)
+
+
+def _prep(mycc, walker_kind):
+
+    mf = mycc._scf
+    (
+        sys,
+        ham_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = testing.make_common_pyscf(
+        mf,
+        make_gcisd_meas_ops,
+        make_gcisd_trial_ops,
+        walker_kind,
+        ham_basis="generalized",
+    )
+    import numpy as np
+
+    def get_gcisd(cc):
+        ci2 = (
+            np.einsum("ijab->iajb", cc.t2)
+            + np.einsum("ia,jb->iajb", cc.t1, cc.t1)
+            - np.einsum("ib,ja->iajb", cc.t1, cc.t1)
+        )
+
+        ci1 = jnp.array(cc.t1)
+        ci2 = jnp.array(ci2)
+
+        return ci1, ci2
+
+    ci1, ci2 = get_gcisd(mycc)
+    c = mf.mo_coeff
+    overlap = mf.get_ovlp(mf.mol)
+    q, r = np.linalg.qr(c.T @ overlap @ c)
+    sgn = np.sign(r.diagonal())
+    mo = jnp.einsum("ij,j->ij", q, sgn)
+    trial_data = GcisdTrial(mo_coeff=mo, c1=ci1, c2=ci2)
+
+    return sys, ham_data, trial_data, trial_ops, prop_ops, meas_ops
+
+
+@pytest.mark.parametrize(
+    "walker_kind, e_ref, err_ref",
+    [
+        ("generalized", -55.43960013399074, 0.0001081737355823328),
+    ],
+)
+def test_calc_ghf_hamiltonian(mycc, params, walker_kind, e_ref, err_ref):
+    (
+        sys,
+        ham_data,
+        trial_data,
+        trial_ops,
+        prop_ops,
+        meas_ops,
+    ) = _prep(mycc, walker_kind)
+
+    block_fn = block
+
+    mean, err, block_e_all, block_w_all = testing.run_calc(
+        sys,
+        meas_ops,
+        ham_data,
+        trial_ops,
+        trial_data,
+        params,
+        block_fn,
+        prop_ops,
+    )
+    assert jnp.isclose(mean, e_ref), (mean, e_ref, mean - e_ref)
+    assert jnp.isclose(err, err_ref), (err, err_ref, err - err_ref)
+
+
+@pytest.fixture(scope="module")
+def mycc():
+    mol = gto.M(
+        atom="""
+        N        0.0000000000      0.0000000000      0.0000000000
+        H        1.0225900000      0.0000000000      0.0000000000
+        H       -0.2281193615      0.9968208791      0.0000000000
+        """,
+        basis="sto-6g",
+        spin=1,
+    )
+    mf = scf.GHF(mol).newton().x2c()  # type: ignore
+    mf.kernel()
+    mycc = cc.GCCSD(mf)
+    mycc.kernel()
+    return mycc
+
+
+@pytest.fixture(scope="module")
+def params():
+    return QmcParams(
+        n_eql_blocks=4,
+        n_blocks=20,
+        seed=1234,
+        n_walkers=5,
+    )
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -125,7 +125,7 @@ class UcisdMeasCtx:
         )
 
 
-def force_bias_kernel_r(
+def force_bias_kernel_rw_rh(
     walker: jax.Array,
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
@@ -133,10 +133,10 @@ def force_bias_kernel_r(
 ) -> jax.Array:
     """Calculates force bias < psi_T | chol_gamma | walker > / < psi_T | walker >"""
     assert trial_data.nocc[0] == trial_data.nocc[1]
-    return force_bias_kernel_u((walker, walker), ham_data, meas_ctx, trial_data) 
+    return force_bias_kernel_uw_rh((walker, walker), ham_data, meas_ctx, trial_data) 
 
 
-def force_bias_kernel_u(
+def force_bias_kernel_uw_rh(
     walker: tuple[jax.Array, jax.Array],
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
@@ -250,7 +250,7 @@ def force_bias_kernel_u(
 
     return (fb_0 + fb_1 + fb_2) / overlap
 
-def force_bias_kernel_g(
+def force_bias_kernel_gw_rh(
     walker: jax.Array,
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
@@ -381,17 +381,17 @@ def force_bias_kernel_g(
     return nu
 
 
-def energy_kernel_r(
+def energy_kernel_rw_rh(
     walker: jax.Array,
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
     trial_data: UcisdTrial,
 ) -> jax.Array:
     assert trial_data.nocc[0] == trial_data.nocc[1]
-    return energy_kernel_u((walker, walker), ham_data, meas_ctx, trial_data)
+    return energy_kernel_uw_rh((walker, walker), ham_data, meas_ctx, trial_data)
 
 
-def energy_kernel_u(
+def energy_kernel_uw_rh(
     walker: tuple[jax.Array, jax.Array],
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
@@ -694,7 +694,7 @@ def energy_kernel_u(
     overlap = 1.0 + overlap_1 + overlap_2
     return (e1 + e2) / overlap + e0
 
-def energy_kernel_g(
+def energy_kernel_gw_rh(
     walker: jax.Array,
     ham_data: HamChol,
     meas_ctx: UcisdMeasCtx,
@@ -1200,7 +1200,7 @@ def energy_kernel_g(
 
     return e + e0
 
-def build_meas_ctx(ham_data: HamChol, trial_data: UcisdTrial) -> UcisdMeasCtx:
+def build_meas_ctx(ham_data: HamChol, trial_data: UcisdTrial, cfg: UcisdMeasCfg = UcisdMeasCfg()) -> UcisdMeasCtx:
     if ham_data.basis != "restricted":
         raise ValueError("UCISD MeasOps currently assumes HamChol.basis == 'restricted'.")
     n_oa, n_ob = trial_data.nocc
@@ -1238,31 +1238,51 @@ def build_meas_ctx(ham_data: HamChol, trial_data: UcisdTrial) -> UcisdMeasCtx:
         rot_chol_flat_b=rot_chol_flat_b,
         lci1_a=lci1_a,
         lci1_b=lci1_b,
-        cfg=UcisdMeasCfg(),
+        cfg=cfg,
     )
 
 
-def make_ucisd_meas_ops(sys: System) -> MeasOps:
+def make_ucisd_meas_ops(
+    sys: System,
+    memory_mode: str = "high",
+    mixed_precision: bool = True,
+    testing: bool = False,
+) -> MeasOps:
     wk = sys.walker_kind.lower()
+
+    cfg = UcisdMeasCfg(
+        memory_mode=memory_mode,
+        mixed_real_dtype=jnp.float32 if mixed_precision else jnp.float64,
+        mixed_complex_dtype=jnp.complex64 if mixed_precision else jnp.complex128,
+        mixed_real_dtype_testing=jnp.float64 if testing else jnp.float32,
+        mixed_complex_dtype_testing=jnp.complex128 if testing else jnp.complex64,
+    )
+
     if wk == "restricted":
         return MeasOps(
             overlap=overlap_r,
-            build_meas_ctx=build_meas_ctx,
-            kernels={k_force_bias: force_bias_kernel_r, k_energy: energy_kernel_r},
+            build_meas_ctx=lambda ham_data, trial_data: build_meas_ctx(
+                ham_data, trial_data, cfg
+            ),
+            kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
         )
 
     if wk == "unrestricted":
         return MeasOps(
             overlap=overlap_u,
-            build_meas_ctx=build_meas_ctx,
-            kernels={k_force_bias: force_bias_kernel_u, k_energy: energy_kernel_u},
+            build_meas_ctx=lambda ham_data, trial_data: build_meas_ctx(
+                ham_data, trial_data, cfg
+            ),
+            kernels={k_force_bias: force_bias_kernel_uw_rh, k_energy: energy_kernel_uw_rh},
         )
 
     if wk == "generalized":
         return MeasOps(
             overlap=overlap_g,
-            build_meas_ctx=build_meas_ctx,
-            kernels={k_force_bias: force_bias_kernel_g, k_energy: energy_kernel_g},
+            build_meas_ctx=lambda ham_data, trial_data: build_meas_ctx(
+                ham_data, trial_data, cfg
+            ),
+            kernels={k_force_bias: force_bias_kernel_gw_rh, k_energy: energy_kernel_gw_rh},
         )
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")

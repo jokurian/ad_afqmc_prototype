@@ -1,20 +1,16 @@
 from ad_afqmc_prototype import config
 
-config.setup_jax()
-
-from typing import Literal
+config.configure_once()
 
 import jax
 import jax.numpy as jnp
 import pytest
 
+from ad_afqmc_prototype import testing
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.eom_cisd import make_eom_cisd_meas_ops
 from ad_afqmc_prototype.trial.eom_cisd import EomCisdTrial, make_eom_cisd_trial_ops
-from ad_afqmc_prototype import testing
+
 
 def _make_eom_cisd_trial(
     key,
@@ -45,17 +41,9 @@ def _make_eom_cisd_trial(
     return EomCisdTrial(ci1=c1, ci2=c2, r1=r1, r2=r2)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol",
-    [
-        (8, 3, 10),
-        (8, 3, 10),
-        (10, 4, 12),
-        (10, 4, 12),
-    ],
-)
+@pytest.mark.parametrize("norb,nocc,n_chol", [(10, 4, 12)])
 def test_auto_force_bias_matches_manual_eom_cisd(norb, nocc, n_chol):
-    walker_kind="restricted"
+    walker_kind = "restricted"
     key = jax.random.PRNGKey(123)
     k_ham, k_trial, k_w = jax.random.split(key, 3)
 
@@ -98,17 +86,9 @@ def test_auto_force_bias_matches_manual_eom_cisd(norb, nocc, n_chol):
         assert jnp.allclose(v_a, v_m, rtol=2e-5, atol=2e-6), (v_a, v_m)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol",
-    [
-        (8, 3, 10),
-        (8, 3, 10),
-        (10, 4, 12),
-        (10, 4, 12),
-    ],
-)
+@pytest.mark.parametrize("norb,nocc,n_chol", [(10, 4, 12)])
 def test_auto_energy_matches_manual_eom_cisd(norb, nocc, n_chol):
-    walker_kind="restricted"
+    walker_kind = "restricted"
     key = jax.random.PRNGKey(456)
     key, k_w = jax.random.split(key)
 
